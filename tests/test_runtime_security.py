@@ -51,7 +51,6 @@ def test_runtime_entrypoints_use_cross_platform_fchmod_helper():
     for relative in (
         "run_until_100.py",
         "webui/monitor.py",
-        "webui/recovery_ops.py",
     ):
         source = (ROOT / relative).read_text(encoding="utf-8")
         assert "os.fchmod" not in source

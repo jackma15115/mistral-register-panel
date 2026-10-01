@@ -262,10 +262,10 @@ def test_process_group_settings_follow_platform():
     }
 
 
-def test_recovery_module_can_run_from_webui_directory():
+def test_account_login_module_can_run_from_webui_directory():
     env = {**os.environ, "PYTHONPATH": ""}
     result = subprocess.run(
-        [sys.executable, str(ROOT / "webui" / "recovery_ops.py")],
+        [sys.executable, str(ROOT / "webui" / "account_login_ops.py")],
         cwd=str(ROOT / "webui"),
         env=env,
         capture_output=True,
@@ -292,5 +292,5 @@ if __name__ == "__main__":
     test_posix_playwright_node_keeps_wrapper()
     test_posix_rejects_wrapper_as_grok_playwright_node()
     test_process_group_settings_follow_platform()
-    test_recovery_module_can_run_from_webui_directory()
+    test_account_login_module_can_run_from_webui_directory()
     print("OK runtime platform")

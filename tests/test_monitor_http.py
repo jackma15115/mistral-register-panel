@@ -107,23 +107,11 @@ def test_monitor_http_auth_and_headers():
         assert "bytes_per_batch" in status_payload["traffic_summary"]
         assert "bytes_per_success" in status_payload["traffic_summary"]
 
-        status, _, _ = request(base + "/api/recovery")
+        status, _, _ = request(base + "/api/account-login")
         assert status == 401
-        status, _, body = request(base + "/api/recovery", token=token)
+        status, _, body = request(base + "/api/account-login", token=token)
         assert status == 200
-        assert "pending_count" in json.loads(body)
-
-        status, _, _ = request(base + "/api/sso-state")
-        assert status == 401
-        status, _, body = request(base + "/api/sso-state", token=token)
-        assert status == 200
-        assert "sources" in json.loads(body)
-        status, _, body = request(
-            base + "/api/sso-state/start",
-            method="POST",
-            body=b'{"source":"paste","text":""}',
-        )
-        assert status == 401
+        assert "items" in json.loads(body)
 
         status, _, body = request(base + "/api/proxies")
         assert status == 401
@@ -556,82 +544,38 @@ def test_account_login_api_requires_write_auth_and_hides_secrets():
             assert "\"password\"" not in text
             assert "\"sso\"" not in text
 
-            match_secret = "match-sso-secret-" + ("s" * 64)
-            match_payload = json.dumps({"sso": match_secret}).encode("utf-8")
-            status, _, body = request(
-                base + "/api/account-login/match-sso",
-                method="POST",
-                body=match_payload,
-            )
-            assert status == 401
-            assert match_secret not in body.decode("utf-8")
-
-            with patch.object(
-                monitor,
-                "start_account_sso_match",
-                return_value={
-                    "ok": True,
-                    "running": True,
-                    "job_kind": "sso_match",
-                    "input_count": 1,
-                },
-            ):
-                status, _, body = request(
-                    base + "/api/account-login/match-sso",
-                    token=token,
-                    method="POST",
-                    body=match_payload,
-                )
-            assert status == 202
-            assert json.loads(body)["job_kind"] == "sso_match"
-            assert match_secret not in body.decode("utf-8")
-
             status, _, _ = request(
-                base + "/api/account-login/sso-check",
+                base + "/api/account-login/start",
                 method="POST",
                 body=b"{}",
             )
             assert status == 401
             with patch.object(
                 monitor,
-                "start_sso_check",
+                "start_account_login",
                 return_value={
                     "ok": True,
                     "running": True,
-                    "job_kind": "sso_check",
+                    "job_kind": "account_login",
                     "input_count": 1,
                 },
-            ) as start_check:
+            ) as start_login:
                 status, _, body = request(
-                    base + "/api/account-login/sso-check",
+                    base + "/api/account-login/start",
                     token=token,
                     method="POST",
-                    body=json.dumps({"concurrency": 4}).encode("utf-8"),
+                    body=json.dumps({"concurrency": 2, "scope": "selected", "ids": ["a" * 20]}).encode("utf-8"),
                 )
             assert status == 202
-            assert json.loads(body)["job_kind"] == "sso_check"
-            start_check.assert_called_once_with(concurrency=4)
+            assert json.loads(body)["job_kind"] == "account_login"
+            start_login.assert_called_once_with(["a" * 20], concurrency=2, pending_only=False, pending_scope=None)
 
-            delete_payload = json.dumps({"ids": ["a" * 20]}).encode("utf-8")
             status, _, _ = request(
-                base + "/api/account-login/delete-invalid",
+                base + "/api/account-login/stop",
                 method="POST",
-                body=delete_payload,
+                body=b"{}",
             )
             assert status == 401
-            with patch.object(
-                monitor,
-                "delete_checked_invalid_accounts",
-                return_value={"ok": True, "deleted": 1, "removed_files": []},
-            ):
-                status, _, body = request(
-                    base + "/api/account-login/delete-invalid",
-                    token=token,
-                    method="POST",
-                    body=delete_payload,
-                )
-            assert status == 200
-            assert json.loads(body)["deleted"] == 1
 
             large_accounts = "\n".join(
                 f"bulk{index}@example.test----bulk-password-{index}"

@@ -18,14 +18,6 @@ $tests = @(
   "tests/test_runtime_security.py",
   "tests/test_runtime_platform.py",
   "tests/test_windows_runtime.py",
-  "tests/test_sso_recovery.py",
-  "tests/test_sso_state.py",
-  "tests/test_registration_risk_gate.py",
-  "tests/test_quality_probe.py",
-  "tests/test_quality_register.py",
-  "tests/test_bfs_detect.py",
-  "tests/test_bfs_ops.py",
-  "tests/test_bfs_worker_integration.py",
   "tests/test_static_asset_cache.py",
   "tests/test_batch_traffic.py",
   "tests/test_retry_policy.py",
@@ -49,8 +41,6 @@ $tests = @(
   "tests/test_account_login_flow.py",
   "tests/test_account_login_worker.py",
   "tests/test_account_login_ops.py",
-  "tests/test_account_sso_match_worker.py",
-  "tests/test_account_sso_check.py",
   "tests/test_docker_assets.py",
   "tests/test_orchestrator_policy.py",
   "tests/test_mistral_flow.py"
@@ -66,7 +56,7 @@ foreach ($test in $tests) {
 }
 
 Write-Host "[windows-tests] compileall"
-& $python "scripts/run_python_isolated.py" "--timeout" "300" "--" -m compileall -q secure_files.py sso_utils.py webui email_providers browser_session.py connectivity.py grok_register_ttk.py register_flow.py runtime_platform.py batch_supervisor.py run_batch_headless.py run_until_100.py sso_to_auth_json.py account_login_flow.py account_login_worker.py account_sso_match_worker.py account_sso_check_worker.py quality_probe.py scripts/run_python_isolated.py scripts/check_bfs.py scripts/check_sso_state.py scripts/check_quality.py webui/bfs_ops.py webui/sso_state_ops.py webui/account_sso_check_ops.py webui/quality_ops.py static_asset_cache.py batch_traffic.py retry_policy.py run_batch_headless_static_cache.py run_until_100_static_cache.py
+& $python "scripts/run_python_isolated.py" "--timeout" "300" "--" -m compileall -q secure_files.py sso_utils.py webui email_providers browser_session.py connectivity.py grok_register_ttk.py register_flow.py runtime_platform.py batch_supervisor.py run_batch_headless.py run_until_100.py account_login_flow.py account_login_worker.py scripts/run_python_isolated.py static_asset_cache.py batch_traffic.py retry_policy.py run_batch_headless_static_cache.py run_until_100_static_cache.py
 if ($LASTEXITCODE -ne 0) {
   throw "compileall failed (exit code $LASTEXITCODE)"
 }

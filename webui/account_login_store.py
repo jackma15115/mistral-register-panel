@@ -19,7 +19,16 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from sso_to_auth_json import cpa_auth_filename, grok2api_auth_filename
+def cpa_auth_filename(record: dict) -> str:
+    email = str((record or {}).get("email") or "").strip()
+    return f"xai-{email}.json" if email else "xai-unknown.json"
+
+
+def grok2api_auth_filename(record: dict, email: str = "") -> str:
+    email = str(email or (record or {}).get("email") or "").strip()
+    return f"g2a-{email}.json" if email else "g2a-unknown.json"
+
+
 from sso_utils import normalize_sso_token
 
 try:

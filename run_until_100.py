@@ -67,12 +67,12 @@ def apply_control() -> None:
             RISK_PAUSE = max(1, int(c["risk_pause"]))
         except Exception:
             pass
-    # 再跑 N 个：以当前 CPA 为基线
+    # 再跑 N 个：以当前账号数为基线
     add_count = c.get("add_count")
     if add_count is not None and str(add_count).strip() != "":
         try:
             n = max(1, int(add_count))
-            now = len(list(AUTHS.glob("xai-*.json")))
+            now = cpa_count()
             BASE0 = now
             TARGET_CPA = now + n
             return
@@ -101,8 +101,29 @@ def log(msg: str) -> None:
     append_private_text(ORCH_LOG, line + "\n")
 
 
+def mistral_account_count(base_dir: Path | None = None) -> int:
+    root = base_dir or AUTHS.parent
+    for p in (root / "key.txt", root / "accounts" / "key.txt"):
+        if p.is_file():
+            try:
+                lines = [line.strip() for line in p.read_text(encoding="utf-8").splitlines() if line.strip()]
+                return len(lines)
+            except OSError:
+                pass
+    for p in (root / "account.csv", root / "accounts" / "account.csv"):
+        if p.is_file():
+            try:
+                lines = [line.strip() for line in p.read_text(encoding="utf-8").splitlines() if line.strip()]
+                return max(0, len(lines) - 1)
+            except OSError:
+                pass
+    if AUTHS.is_dir():
+        return len(list(AUTHS.glob("xai-*.json")))
+    return 0
+
+
 def cpa_count() -> int:
-    return len(list(AUTHS.glob("xai-*.json")))
+    return mistral_account_count()
 
 
 def kill_batch() -> None:

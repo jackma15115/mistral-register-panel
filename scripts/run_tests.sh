@@ -13,14 +13,6 @@ tests=(
   tests/test_runtime_security.py
   tests/test_runtime_platform.py
   tests/test_windows_runtime.py
-  tests/test_sso_recovery.py
-  tests/test_sso_state.py
-  tests/test_registration_risk_gate.py
-  tests/test_quality_probe.py
-  tests/test_quality_register.py
-  tests/test_bfs_detect.py
-  tests/test_bfs_ops.py
-  tests/test_bfs_worker_integration.py
   tests/test_static_asset_cache.py
   tests/test_batch_traffic.py
   tests/test_retry_policy.py
@@ -44,10 +36,9 @@ tests=(
   tests/test_account_login_flow.py
   tests/test_account_login_worker.py
   tests/test_account_login_ops.py
-  tests/test_account_sso_match_worker.py
-  tests/test_account_sso_check.py
   tests/test_docker_assets.py
   tests/test_orchestrator_policy.py
+  tests/test_mistral_flow.py
 )
 
 for test_file in "${tests[@]}"; do
@@ -67,20 +58,9 @@ done
   batch_supervisor.py \
   run_batch_headless.py \
   run_until_100.py \
-  sso_to_auth_json.py \
   account_login_flow.py \
   account_login_worker.py \
-  account_sso_match_worker.py \
-  account_sso_check_worker.py \
   scripts/run_python_isolated.py \
-  quality_probe.py \
-  scripts/check_bfs.py \
-  scripts/check_sso_state.py \
-  scripts/check_quality.py \
-  webui/bfs_ops.py \
-  webui/sso_state_ops.py \
-  webui/account_sso_check_ops.py \
-  webui/quality_ops.py \
   static_asset_cache.py \
   batch_traffic.py \
   retry_policy.py \

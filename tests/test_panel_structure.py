@@ -96,13 +96,9 @@ def test_help_and_faq_module():
     assert 'body.help-view-open #dashboard-view > :not(#help-view) { display: none; }' in html
     assert 'role="tablist"' in html
     assert 'id="faq-search"' in html
-    assert len(re.findall(r'<details class="faq-item" data-faq-item', html)) == 16
-    assert 'policy=deny' in html
-    assert 'bfs' in html.lower()
-    assert 'id="bfs-title"' in html
-    assert '账号补录' in html
-    assert '成功项会从待补录队列移除' in html
-    assert 'permission-denied' in html
+    assert len(re.findall(r'<details class="faq-item" data-faq-item', html)) == 8
+    assert 'key.txt' in html
+    assert 'account.csv' in html
     assert 'function setAppView(view, options = {})' in mon
     assert 'function toggleAppView()' in mon
     assert 'element.inert = isOverlay;' in mon
@@ -154,42 +150,6 @@ def test_embedded_scripts_parse():
                 assert balance >= 0
         assert balance == 0
 
-
-def test_sso_state_panel_structure():
-    mon = (ROOT / 'webui/monitor.py').read_text(encoding='utf-8')
-    html = mon.split('HTML = r"""', 1)[1].split('"""', 1)[0]
-    assert 'id="sso-view-toggle"' in html
-    assert 'id="sso-view"' in html
-    assert 'id="sso-input"' in html
-    assert 'id="sso-body"' in html
-    assert 'id="sso-dash-title"' in html
-    assert 'function toggleSsoView()' in mon
-    assert 'function startSsoScan()' in mon
-    assert 'function refreshSsoState(' in mon
-    assert '/api/sso-state/start' in mon
-    assert 'view !== "sso"' in mon
-    assert 'from webui.sso_state_ops import' in mon
-    assert (ROOT / 'webui/sso_state_ops.py').is_file()
-    assert (ROOT / 'scripts/check_sso_state.py').is_file()
-
-
-def test_quality_probe_panel_structure():
-    mon = (ROOT / 'webui/monitor.py').read_text(encoding='utf-8')
-    html = mon.split('HTML = r"""', 1)[1].split('"""', 1)[0]
-    assert 'id="quality-view-toggle"' in html
-    assert 'id="quality-view"' in html
-    assert 'id="quality-body"' in html
-    assert 'id="quality-dash-title"' in html
-    assert 'function toggleQualityView()' in mon
-    assert 'function startQualityScan()' in mon
-    assert 'function refreshQuality(' in mon
-    assert '/api/quality/start' in mon
-    assert 'view !== "quality"' in mon
-    assert 'from webui.quality_ops import' in mon
-    assert '推荐家宽出口 + Outlook' in html
-    assert (ROOT / 'webui/quality_ops.py').is_file()
-    assert (ROOT / 'quality_probe.py').is_file()
-    assert (ROOT / 'scripts/check_quality.py').is_file()
 
 
 def test_stats_refresh_persists_across_snapshot_polling():
@@ -265,7 +225,7 @@ def test_email_service_and_domain_rotation_panel_structure():
     assert 'on_email_domain_rejected' in flow
     assert 'on_email_accepted' in flow
 
-def test_panel_security_and_recovery_structure():
+def test_panel_security_and_export_structure():
     mon = (ROOT / 'webui/monitor.py').read_text(encoding='utf-8')
     html = mon.split('HTML = r"""', 1)[1].split('"""', 1)[0]
     assert 'def _require_read(self)' in mon
@@ -274,20 +234,11 @@ def test_panel_security_and_recovery_structure():
     assert 'DEFAULT_MAX_REQUEST_BODY = 16 * 1024 * 1024' in mon
     assert 'MONITOR_MAX_REQUEST_BODY' in mon
     assert mon.index('if not self._require_write():') < mon.index('body = self._read_body()')
-    assert '/api/recovery/start' in mon
-    assert '/api/recovery/stop' in mon
-    assert 'id="recovery-pending"' in html
-    assert 'id="recovery-accounts"' in html
-    assert 'id="recovery-stop"' in html
     assert 'id="export-sso"' in html
     assert 'id="export-credentials"' in html
-    assert 'id="export-cpa-auth"' in html
-    assert 'id="export-grok2api-auth"' in html
     assert 'function downloadAccountExport(path)' in mon
     assert '/api/accounts/export-sso' in mon
     assert '/api/accounts/export-credentials-csv' in mon
-    assert '/api/accounts/export-cpa-auth' in mon
-    assert '/api/accounts/export-grok2api-auth' in mon
     assert 'id="run-status" aria-label="任务状态：加载中"' in html
     assert 'setAttribute("aria-label", "任务状态：" + runLabel)' in mon
     assert 'id="kpis" aria-label="核心指标" aria-live=' not in html
@@ -311,37 +262,22 @@ def test_imported_account_login_panel_structure():
     html = mon.split('HTML = r"""', 1)[1].split('"""', 1)[0]
     assert 'id="account-login-title"' in html
     assert 'id="account-login-input"' in html
-    assert 'id="account-sso-match-input"' in html
-    assert 'id="account-sso-match-start"' in html
-    assert 'id="account-sso-check-start"' in html
-    assert 'id="account-sso-delete-invalid"' in html
-    assert '选择失效 / 无 SSO' in html
     assert 'id="account-login-source-filter"' in html
     assert 'id="account-login-concurrency"' in html
-    assert 'JSON.stringify({ concurrency })' in html
-    assert 'id="account-login-cpa"' in html
     assert 'id="account-login-select-all"' in html
+    assert 'id="account-login-import"' in html
     assert 'id="account-login-start-selected"' in html
-    assert 'id="account-login-start-pending"' in html
-    assert 'id="account-login-start-cpa-missing"' in html
-    assert "startAccountLogin('sso_missing')" in html
-    assert '重新登录 SSO 缺失' in html
-    assert '校验可用 SSO' in html
-    assert "startAccountLogin('cpa_missing')" in html
+    assert 'id="account-login-refresh"' in html
     assert 'id="account-login-stop"' in html
     assert 'id="account-login-body"' in html
     assert 'id="account-login-tail"' in html
     assert 'id="account-login-log-name"' in html
     assert 'function refreshAccountLogin(' in mon
     assert 'function importAccountLoginInput(' in mon
-    assert 'function startAccountSsoMatch(' in mon
     assert 'function startAccountLogin(' in mon
     assert 'function toggleAccountLoginSelectAll(' in mon
     assert 'function changeAccountLoginSourceFilter(' in mon
     assert '/api/account-login/import' in mon
-    assert '/api/account-login/match-sso' in mon
-    assert '/api/account-login/sso-check' in mon
-    assert '/api/account-login/delete-invalid' in mon
     assert '/api/account-login/start' in mon
     assert '/api/account-login/stop' in mon
     assert '/api/account-login/delete' in mon
@@ -360,13 +296,11 @@ if __name__ == '__main__':
     test_reference_motion_and_reduced_motion()
     test_compact_overview_density()
     test_help_and_faq_module()
-    test_sso_state_panel_structure()
-    test_quality_probe_panel_structure()
     test_stats_refresh_persists_across_snapshot_polling()
     test_batch_traffic_metric_structure()
     test_proxy_pool_panel_structure()
     test_email_service_and_domain_rotation_panel_structure()
-    test_panel_security_and_recovery_structure()
+    test_panel_security_and_export_structure()
     test_registration_count_is_a_success_target()
     test_imported_account_login_panel_structure()
     print('OK structure')

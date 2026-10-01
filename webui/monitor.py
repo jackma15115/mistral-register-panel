@@ -55,7 +55,6 @@ try:
         test_email_provider_config,
     )
     from webui.account_exports import (
-        auth_files_zip_export,
         credentials_csv_export,
         sso_export,
     )
@@ -64,32 +63,12 @@ try:
         delete_imported_accounts,
         import_accounts,
         start_account_login,
-        start_account_sso_match,
         stop_account_login,
-    )
-    from webui.account_sso_check_ops import (
-        delete_checked_invalid_accounts,
-        start_sso_check,
-        stop_sso_check,
     )
     from webui.process_utils import (
         find_managed_processes,
         terminate_managed_processes,
         write_pid_file,
-    )
-    from webui.recovery_ops import recovery_status, start_recovery, stop_recovery
-    from webui.bfs_ops import bfs_status, check_token_text, run_bfs_scan
-    from webui.sso_state_ops import (
-        read_sso_state_export,
-        sso_state_status,
-        start_sso_state_scan,
-        stop_sso_state_scan,
-    )
-    from webui.quality_ops import (
-        quality_status,
-        read_quality_export,
-        start_quality_scan,
-        stop_quality_scan,
     )
     from webui.security_utils import (
         check_token_optional_read,
@@ -122,7 +101,6 @@ except ImportError:  # running as script from webui/
         test_email_provider_config,
     )
     from account_exports import (  # type: ignore
-        auth_files_zip_export,
         credentials_csv_export,
         sso_export,
     )
@@ -131,32 +109,12 @@ except ImportError:  # running as script from webui/
         delete_imported_accounts,
         import_accounts,
         start_account_login,
-        start_account_sso_match,
         stop_account_login,
-    )
-    from account_sso_check_ops import (  # type: ignore
-        delete_checked_invalid_accounts,
-        start_sso_check,
-        stop_sso_check,
     )
     from process_utils import (  # type: ignore
         find_managed_processes,
         terminate_managed_processes,
         write_pid_file,
-    )
-    from recovery_ops import recovery_status, start_recovery, stop_recovery  # type: ignore
-    from bfs_ops import bfs_status, check_token_text, run_bfs_scan  # type: ignore
-    from sso_state_ops import (  # type: ignore
-        read_sso_state_export,
-        sso_state_status,
-        start_sso_state_scan,
-        stop_sso_state_scan,
-    )
-    from quality_ops import (  # type: ignore
-        quality_status,
-        read_quality_export,
-        start_quality_scan,
-        stop_quality_scan,
     )
     from security_utils import (  # type: ignore
         check_token_optional_read,
@@ -557,26 +515,28 @@ def parse_log(path, max_tail=400_000):
     return result
 
 
-def cpa_count():
-    global _CPA_COUNT_CACHE
-    try:
-        stat = CPA_DIR.stat()
-        signature = (str(CPA_DIR), int(stat.st_mtime_ns))
-    except OSError:
-        signature = (str(CPA_DIR), False)
-    with _STATS_CACHE_LOCK:
-        if _CPA_COUNT_CACHE and _CPA_COUNT_CACHE[0] == signature:
-            return _CPA_COUNT_CACHE[1]
-    try:
-        count = sum(1 for p in CPA_DIR.iterdir() if p.is_file() and p.name.startswith("xai-"))
-    except Exception:
-        try:
-            count = sum(1 for _ in CPA_DIR.iterdir() if _.is_file())
-        except Exception:
-            count = 0
-    with _STATS_CACHE_LOCK:
-        _CPA_COUNT_CACHE = (signature, count)
-    return count
+def mistral_account_count() -> int:
+    for p in (ROOT / "key.txt", ROOT / "accounts" / "key.txt"):
+        if p.is_file():
+            try:
+                lines = [line.strip() for line in p.read_text(encoding="utf-8").splitlines() if line.strip()]
+                return len(lines)
+            except OSError:
+                pass
+    for p in (ROOT / "account.csv", ROOT / "accounts" / "account.csv"):
+        if p.is_file():
+            try:
+                lines = [line.strip() for line in p.read_text(encoding="utf-8").splitlines() if line.strip()]
+                return max(0, len(lines) - 1)
+            except OSError:
+                pass
+    return 0
+
+
+def cpa_count() -> int:
+    return mistral_account_count()
+
+
 
 
 def read_blacklist():
@@ -677,7 +637,8 @@ def success_stats(current_log=_SUCCESS_LOG_UNSET):
         _signature(log),
         _signature(CONTROL_FILE),
         _signature(BASE_FILE),
-        _signature(CPA_DIR),
+        _signature(ROOT / "key.txt"),
+        _signature(ROOT / "account.csv"),
         int(time.time() // 30),
     )
     with _STATS_CACHE_LOCK:
@@ -880,8 +841,6 @@ def _start_orch_unlocked():
     proc = process_running(fresh=True)
     if proc.get("orch_running") or proc.get("batch_running"):
         return {"ok": False, "error": "already running", "process": proc}
-    if _find_managed_processes(("sso_to_auth_json.py",)):
-        return {"ok": False, "error": "account recovery is running"}
     if find_managed_processes(ROOT, ("account_login_worker.py",)):
         return {"ok": False, "error": "account login task is running"}
     prerequisite_error = _runtime_prerequisite_error()
@@ -957,8 +916,6 @@ def _start_batch_only_unlocked():
     proc = process_running(fresh=True)
     if proc.get("batch_running") or proc.get("orch_running"):
         return {"ok": False, "error": "already running", "process": proc}
-    if _find_managed_processes(("sso_to_auth_json.py",)):
-        return {"ok": False, "error": "account recovery is running"}
     if find_managed_processes(ROOT, ("account_login_worker.py",)):
         return {"ok": False, "error": "account login task is running"}
     prerequisite_error = _runtime_prerequisite_error()
@@ -2231,12 +2188,6 @@ HTML = r"""<!DOCTYPE html>
       <button type="button" class="view-switch" id="proxy-view-toggle" aria-label="打开代理池" title="代理池" aria-controls="proxy-view" aria-expanded="false" data-active="false" onclick="toggleProxyView()">
         <span id="proxy-view-label" aria-hidden="true">代理池</span>
       </button>
-      <button type="button" class="view-switch" id="quality-view-toggle" aria-label="打开降智测试" title="降智测试" aria-controls="quality-view" aria-expanded="false" data-active="false" onclick="toggleQualityView()">
-        <span id="quality-view-label" aria-hidden="true">降智测试</span>
-      </button>
-      <button type="button" class="view-switch" id="sso-view-toggle" aria-label="打开 SSO 风控（已停用）" title="SSO 风控（已停用）" aria-controls="sso-view" aria-expanded="false" data-active="false" onclick="toggleSsoView()">
-        <span id="sso-view-label" aria-hidden="true">SSO 风控</span>
-      </button>
       <button type="button" class="view-switch" id="help-view-toggle" aria-label="打开问题和使用" title="问题和使用" aria-controls="help-view" aria-expanded="false" data-active="false" onclick="toggleAppView()">
         <span id="help-view-label" aria-hidden="true">问题和使用</span>
       </button>
@@ -2265,7 +2216,7 @@ HTML = r"""<!DOCTYPE html>
     <div class="control-grid">
       <div class="field field-token">
         <label for="monitor-token">访问令牌</label>
-        <input id="monitor-token" type="password" autocomplete="off" placeholder="MONITOR_TOKEN" onchange="getToken(); refresh(); refreshRecovery(); refreshProxies(); refreshEmailProvider(); refreshEmailDomains(); refreshSsoState(); refreshQuality(); refreshBfs()" onblur="getToken()"/>
+        <input id="monitor-token" type="password" autocomplete="off" placeholder="MONITOR_TOKEN" onchange="getToken(); refresh(); refreshProxies(); refreshEmailProvider(); refreshEmailDomains(); refreshAccountLogin();" onblur="getToken()"/>
       </div>
       <div class="field field-mode">
         <label for="mode">运行模式</label>
@@ -2281,7 +2232,7 @@ HTML = r"""<!DOCTYPE html>
         <input type="number" id="batch_count" min="1" value="40"/>
       </div>
       <div class="field"><label for="add_count">追加目标</label>
-        <input type="number" id="add_count" min="1" value="40" title="每次启动从当前 CPA 再注册 N 个"/>
+        <input type="number" id="add_count" min="1" value="40" title="每次启动从当前成功数再注册 N 个"/>
       </div>
       <div class="field"><label for="risk_pause">风控阈值</label>
         <input type="number" id="risk_pause" min="1" max="50" value="10"/>
@@ -2335,44 +2286,20 @@ HTML = r"""<!DOCTYPE html>
         <div class="faq-tools">
           <label class="sr-only" for="faq-search">搜索常见问题</label>
           <input id="faq-search" type="search" placeholder="搜索错误码或现象" autocomplete="off" oninput="filterFaq(this.value)"/>
-          <span class="faq-count mono" id="faq-count">16 项</span>
+          <span class="faq-count mono" id="faq-count">8 项</span>
         </div>
         <div class="faq-grid" id="faq-grid">
           <details class="faq-item" data-faq-item data-search="令牌 token unauthorized 401 保存设置 启动">
             <summary>提示访问令牌不匹配或 401</summary>
             <div class="faq-answer">重新输入当前面板令牌并保存。令牌只保存在当前浏览器的 localStorage 中，换端口、设备或浏览器后需要重新输入。</div>
           </details>
-          <details class="faq-item" data-faq-item data-search="启动 立即结束 目标 cpa add_count 追加目标">
+          <details class="faq-item" data-faq-item data-search="启动 立即结束 目标 add_count 追加目标 账号数">
             <summary>点击启动后立即结束</summary>
-            <div class="faq-answer">通常是 CPA 已达到旧目标。提高“追加目标”后再启动；持续编排会以当前 CPA 为基线增加 N，单批运行按“目标成功数”补位失败尝试。</div>
-          </details>
-          <details class="faq-item" data-faq-item data-search="风控 policy deny registration risk botFlagSource ip 邮箱 域名 家宽 outlook">
-            <summary>出现 policy=deny 或注册风控</summary>
-            <div class="faq-answer">grok.com 的 botFlag / policy 已不能可靠判断风控。注册门禁不再据此跳过 OAuth。要确认账号能不能聊、有没有降智，用顶部“降智测试”走家宽实聊。出口优先家宽，邮箱优先 Outlook，不要用域名邮箱作为主路径，并发先保持 2-3。</div>
-          </details>
-          <details class="faq-item" data-faq-item data-search="bfs jwt claim access_token 标记 flagged 风控 检测 scan">
-            <summary>什么是 bfs，和 botFlagSource 有何不同</summary>
-            <div class="faq-answer"><code>bfs</code> 是 xAI access_token / SSO JWT 里的风险 claim：payload 里<strong>出现该字段</strong>即视为标记（常见值 2）。它与 grok.com 页面的 <code>botFlagSource</code> / <code>policy=deny</code> 独立。注册换 token 后会自动检测；也可在控制台“BFS 检测”扫描 CPA 目录，导出 <code>log/bfs_flagged.jsonl</code>。配置 <code>bfs_skip_cpa</code> 可跳过入库，<code>bfs_disable_cpa</code> 可写 disabled。</div>
-          </details>
-          <details class="faq-item" data-faq-item data-search="sso 风控 botFlagSource policy deny check-sso-state 检测 面板 粘贴 停用 deprecated">
-            <summary>SSO 风控还能用吗</summary>
-            <div class="faq-answer">不能再作为判定。grok.com 页面上的 <code>botFlagSource</code> / <code>policy=deny</code> 已不可靠，注册也不会再据此拦截 OAuth。顶部仍保留旧扫描面板，仅供对照。请改用“降智测试”。</div>
-          </details>
-          <details class="faq-item" data-faq-item data-search="降智测试 quality probe 家宽 thinking tps 实聊 账号 批量">
-            <summary>如何批量测试账号是否降智</summary>
-            <div class="faq-answer">入库短测默认关，打开 <code>quality_probe_on_register</code> 后才会在写入 CPA / Grok2API 时短测（短题，见到 thinking 即停）。存量号仍可打开顶部“降智测试”批量复测。有 thinking 记为正常；缺少 thinking 记为降智；401/403 / permission-denied 记为风控。命令行：<code>python scripts/check_quality.py --dir cpa_auth --from-config config.json</code>。脱敏结果写到 <code>log/quality_degraded.jsonl</code> 和 <code>log/quality_risk.jsonl</code>。</div>
+            <div class="faq-answer">通常是账号数已达到旧目标。提高“追加目标”后再启动；持续编排会以当前账号数为基线增加 N，单批运行按“目标成功数”补位失败尝试。</div>
           </details>
           <details class="faq-item" data-faq-item data-search="卡住 浏览器 启动失败 turnstile 资料页 空页 并发 camoufox">
             <summary>注册卡在验证码、资料页或浏览器启动</summary>
             <div class="faq-answer">先从失败分类和日志尾部确认具体阶段。连续浏览器启动失败时降低并发，并检查是否执行过 <code>camoufox fetch</code>；资料页失败也可能是 Turnstile 未通过。</div>
-          </details>
-          <details class="faq-item" data-faq-item data-search="cpa 没新增 invalid_grant access denied 503 auth unavailable oauth 入库 目录 管理密钥">
-            <summary>CPA 没新增，或出现 invalid_grant / 503</summary>
-            <div class="faq-answer">先检查 <code>cpa_auto_add</code>、auth 目录、远程 CPA 地址和管理密钥。<code>invalid_grant Access denied</code> 表示 OAuth 交换被拒；503 表示 CPA 当前没有可用 xAI auth。</div>
-          </details>
-          <details class="faq-item" data-faq-item data-search="permission denied access chat endpoint referrer grok build base_url oauth">
-            <summary>调用模型提示 permission-denied</summary>
-            <div class="faq-answer">常见原因是 token 缺少 <code>referrer=grok-build</code>，或 <code>base_url</code> 指向了 <code>api.x.ai</code>。使用项目的 Authorization Code + PKCE 流程重新生成，并指向 Build 通道。</div>
           </details>
           <details class="faq-item" data-faq-item data-search="出口 ip 代理 无法解析 流量 住宅 链式 dialer">
             <summary>无法解析出口 IP，或代理流量消耗很高</summary>
@@ -2382,25 +2309,17 @@ HTML = r"""<!DOCTYPE html>
             <summary>邮箱 API 返回 401 或请求超时</summary>
             <div class="faq-answer">401 先检查对应邮箱服务的 key 和 <code>auth_mode</code>。访问 workers.dev 超时时，在配置中显式填写代理，不要只依赖桌面进程可能无法继承的 HTTP_PROXY 环境变量。</div>
           </details>
-          <details class="faq-item" data-faq-item data-search="邮箱服务 provider cloudflare duckmail yyds mailnest cloudmail moemail ti temp mail outlook_rt inbucket 自建 jsonl refresh_token api 测试 域名轮换 家宽 推荐">
+          <details class="faq-item" data-faq-item data-search="邮箱服务 provider cloudflare duckmail yyds mailnest cloudmail moemail ti temp mail 测试 域名轮换">
             <summary>如何配置邮箱服务</summary>
-            <div class="faq-answer">推荐家宽出口 + Outlook 等真实邮箱，不要把域名邮箱当作主路径。打开顶部“邮箱服务”，优先选 Outlook RT，填写 jsonl（email + refresh_token）后保存并测试。其它临时邮或自有域名仅作备选；自有域名轮换仍在同页高级设置，但容易被拒。</div>
+            <div class="faq-answer">打开顶部“邮箱服务”，支持 Ti Temp Mail、DuckMail、YYDS、MailNest、CloudMail、MoeMail 等临时邮或自建服务，填写 API key 后保存并测试。自有域名轮换可在“域名池”中管理。</div>
           </details>
           <details class="faq-item" data-faq-item data-search="黑名单 asn 清除 重置 baseline 风控 出口">
             <summary>黑名单有什么作用，可以清除吗</summary>
             <div class="faq-answer">黑名单用于避开持续触发风控的出口 ASN。面板“重置”会恢复基线熔断规则；不清楚影响时不要清空全部规则，重复命中通常说明出口质量需要调整。</div>
           </details>
-          <details class="faq-item" data-faq-item data-search="accounts txt sso 导入 cpa json sub2api 转换">
-            <summary>已有 accounts 文本怎么导入 CPA 或 sub2api</summary>
-            <div class="faq-answer">控制台的“账号补录”可处理待补录队列，也可扫描全部 accounts 文本；已存在 CPA 的账号会跳过，成功项会从待补录队列移除。面板不直接导入 sub2api，需要按目标系统的数据结构另行转换。</div>
-          </details>
-          <details class="faq-item" data-faq-item data-search="搜索 模型 grok build 4.5 能力 api">
-            <summary>注册成功但搜索或某个模型不可用</summary>
-            <div class="faq-answer">注册成功不代表所有上游能力都会开放。确认请求走 Grok Build 通道；搜索和具体模型可用性仍可能随账号状态和上游策略变化。</div>
-          </details>
-          <details class="faq-item" data-faq-item data-search="体验额度 429 quota rate limit 免费 余额">
-            <summary>体验额度有多少，出现 429 怎么办</summary>
-            <div class="faq-answer">体验额度由上游按账号分配，面板无法推算准确余额。429 通常表示额度耗尽或触发速率限制，需要等待恢复或更换仍有可用额度的 auth。</div>
+          <details class="faq-item" data-faq-item data-search="导出 账号 api key key.txt account.csv 格式">
+            <summary>如何导出注册成功的账号与 API Key</summary>
+            <div class="faq-answer">在控制台的“账号与导出”区域点击“导出 API Key (key.txt)”或“导出账号凭据 (CSV)”。系统会自动生成 <code>key.txt</code>（一行一个 API Key）与 <code>account.csv</code>（包含 email, password, api_key 等完整字段）。</div>
           </details>
         </div>
         <p class="faq-empty" id="faq-empty" hidden>没有匹配的问题，请换一个错误码或现象关键词。</p>
@@ -2579,165 +2498,6 @@ HTML = r"""<!DOCTYPE html>
     </div>
   </section>
 
-  <section class="sso-view" id="sso-view" aria-labelledby="sso-view-title" hidden>
-    <div class="sso-view-inner">
-      <div class="sso-view-heading">
-        <div>
-          <div class="mail-source-kicker">Account state</div>
-          <div class="page-title" id="sso-view-title">SSO 风控</div>
-          <p class="sso-view-subtitle">已停用：grok.com botFlag / policy 不再作为风控依据，请改用降智测试</p>
-        </div>
-        <span class="sso-job mono" id="sso-heading-status">尚未扫描</span>
-      </div>
-
-      <div class="sso-summary" id="sso-summary" aria-label="SSO 风控扫描结果">
-        <div class="sso-summary-item"><div class="sso-summary-label">总数</div><div class="sso-summary-value" id="sso-kpi-total">--</div></div>
-        <div class="sso-summary-item"><div class="sso-summary-label">干净</div><div class="sso-summary-value ok" id="sso-kpi-clean">--</div></div>
-        <div class="sso-summary-item"><div class="sso-summary-label">标记</div><div class="sso-summary-value fail" id="sso-kpi-flagged">--</div></div>
-        <div class="sso-summary-item"><div class="sso-summary-label">deny</div><div class="sso-summary-value warn" id="sso-kpi-denied">--</div></div>
-        <div class="sso-summary-item"><div class="sso-summary-label">失败</div><div class="sso-summary-value" id="sso-kpi-error">--</div></div>
-        <div class="sso-summary-item"><div class="sso-summary-label">进度</div><div class="sso-summary-value" id="sso-kpi-progress">--</div></div>
-      </div>
-
-      <div class="sso-import">
-        <div class="field">
-          <label for="sso-input">SSO 列表（每行一条）</label>
-          <textarea id="sso-input" spellcheck="false" autocomplete="off" placeholder="email----sso&#10;email----password----sso&#10;eyJ..."></textarea>
-        </div>
-        <div class="sso-import-actions">
-          <div>
-            <div class="sso-source-row" role="group" aria-label="数据来源">
-              <button type="button" id="sso-src-paste" aria-pressed="true" onclick="setSsoSource('paste')">粘贴</button>
-              <button type="button" id="sso-src-pending" aria-pressed="false" onclick="setSsoSource('pending')">待处理</button>
-              <button type="button" id="sso-src-accounts" aria-pressed="false" onclick="setSsoSource('accounts')">全部账号</button>
-              <button type="button" id="sso-src-risk" aria-pressed="false" onclick="setSsoSource('risk')">已隔离</button>
-            </div>
-            <div class="sso-settings" style="margin-top:10px">
-              <div class="field">
-                <label for="sso-delay">间隔秒</label>
-                <input type="number" id="sso-delay" min="0" max="10" step="0.1" value="0.4"/>
-              </div>
-              <div class="field">
-                <label for="sso-proxy">代理（可空）</label>
-                <input id="sso-proxy" type="text" autocomplete="off" placeholder="沿用 config.proxy"/>
-              </div>
-            </div>
-            <p class="sso-format" id="sso-source-hint">已停用。此扫描仅对照历史字段，不能判断账号是否可聊或降智。</p>
-          </div>
-          <div class="button-group">
-            <button class="primary" id="sso-start" onclick="startSsoScan()">开始检测</button>
-            <button class="danger" id="sso-stop" onclick="stopSsoScan()">停止</button>
-            <button id="sso-export-flagged" onclick="exportSsoState('flagged')">导出标记</button>
-            <button id="sso-export-clean" onclick="exportSsoState('clean')">导出干净</button>
-          </div>
-        </div>
-      </div>
-      <div class="msg" id="sso-msg" role="status" aria-live="polite"></div>
-
-      <div class="sso-list-section">
-        <div class="sso-list-head">
-          <div>
-            <h2>检测明细</h2>
-            <div class="sso-job mono" id="sso-job-status" role="status" aria-live="polite">等待开始</div>
-          </div>
-          <div class="sso-filter" role="group" aria-label="结果筛选">
-            <button type="button" id="sso-filter-all" aria-pressed="true" onclick="setSsoFilter('all')">全部</button>
-            <button type="button" id="sso-filter-flagged" aria-pressed="false" onclick="setSsoFilter('flagged')">标记</button>
-            <button type="button" id="sso-filter-clean" aria-pressed="false" onclick="setSsoFilter('clean')">干净</button>
-            <button type="button" id="sso-filter-error" aria-pressed="false" onclick="setSsoFilter('error')">失败</button>
-          </div>
-        </div>
-        <div class="sso-table-wrap">
-          <table class="sso-table">
-            <thead><tr><th>邮箱</th><th>bot</th><th>policy</th><th>risk</th><th>event</th><th>判定</th><th>说明</th></tr></thead>
-            <tbody id="sso-body"><tr><td colspan="7" class="sso-empty">粘贴 SSO 或选择库存后开始检测</td></tr></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="sso-view quality-view" id="quality-view" aria-labelledby="quality-view-title" hidden>
-    <div class="sso-view-inner">
-      <div class="sso-view-heading">
-        <div>
-          <div class="mail-source-kicker">Chat quality</div>
-          <div class="page-title" id="quality-view-title">降智测试</div>
-          <p class="sso-view-subtitle">入库短测默认关。这里复测存量 auth：短题 + 见到 thinking 即停</p>
-        </div>
-        <span class="sso-job mono" id="quality-heading-status">尚未扫描</span>
-      </div>
-      <p class="recommend-banner">走家宽短测。有 thinking 记为正常，缺少 thinking 记为降智；401/403 / permission-denied 记为风控。SSO botFlag 已不可用。</p>
-
-      <div class="sso-summary" id="quality-summary" aria-label="降智测试结果">
-        <div class="sso-summary-item"><div class="sso-summary-label">总数</div><div class="sso-summary-value" id="quality-kpi-total">--</div></div>
-        <div class="sso-summary-item"><div class="sso-summary-label">正常</div><div class="sso-summary-value ok" id="quality-kpi-healthy">--</div></div>
-        <div class="sso-summary-item"><div class="sso-summary-label">降智</div><div class="sso-summary-value fail" id="quality-kpi-degraded">--</div></div>
-        <div class="sso-summary-item"><div class="sso-summary-label">风控</div><div class="sso-summary-value fail" id="quality-kpi-risk">--</div></div>
-        <div class="sso-summary-item"><div class="sso-summary-label">失败</div><div class="sso-summary-value" id="quality-kpi-error">--</div></div>
-        <div class="sso-summary-item"><div class="sso-summary-label">进度</div><div class="sso-summary-value" id="quality-kpi-progress">--</div></div>
-      </div>
-
-      <div class="sso-import">
-        <div>
-          <div class="sso-source-row" role="group" aria-label="数据来源">
-            <button type="button" id="quality-src-cpa" aria-pressed="true" onclick="setQualitySource('cpa')">CPA auth</button>
-            <button type="button" id="quality-src-g2a" aria-pressed="false" onclick="setQualitySource('g2a')">Grok2API</button>
-            <button type="button" id="quality-src-all" aria-pressed="false" onclick="setQualitySource('all')">全部 auth</button>
-          </div>
-          <div class="sso-settings" style="margin-top:10px">
-            <div class="field">
-              <label for="quality-workers">并发</label>
-              <input type="number" id="quality-workers" min="1" max="8" value="2"/>
-            </div>
-            <div class="field">
-              <label for="quality-delay">间隔秒</label>
-              <input type="number" id="quality-delay" min="0" max="10" step="0.1" value="0.2"/>
-            </div>
-            <div class="field">
-              <label for="quality-proxy">代理（可空=家宽池）</label>
-              <input id="quality-proxy" type="text" autocomplete="off" placeholder="空则使用家宽 / 代理池"/>
-            </div>
-            <div class="field">
-              <label for="quality-limit">最多条数（0=最近 2000）</label>
-              <input type="number" id="quality-limit" min="0" max="2000" value="200"/>
-            </div>
-          </div>
-          <p class="sso-format" id="quality-source-hint">扫描 cpa_auth，默认测最近 200 条。点「开始测试」后看本页提示和进度，不要填 0 指望一次扫完全库。</p>
-        </div>
-        <div class="button-group">
-          <button class="primary" id="quality-start" onclick="startQualityScan()">开始测试</button>
-          <button class="danger" id="quality-stop" onclick="stopQualityScan()">停止</button>
-          <button id="quality-export-degraded" onclick="exportQuality('degraded')">导出降智</button>
-          <button id="quality-export-risk" onclick="exportQuality('risk')">导出风控</button>
-        </div>
-      </div>
-      <div class="msg" id="quality-msg" role="status" aria-live="polite"></div>
-
-      <div class="sso-list-section">
-        <div class="sso-list-head">
-          <div>
-            <h2>检测明细</h2>
-            <div class="sso-job mono" id="quality-job-status" role="status" aria-live="polite">等待开始</div>
-          </div>
-          <div class="sso-filter" role="group" aria-label="结果筛选">
-            <button type="button" id="quality-filter-all" aria-pressed="true" onclick="setQualityFilter('all')">全部</button>
-            <button type="button" id="quality-filter-healthy" aria-pressed="false" onclick="setQualityFilter('healthy')">正常</button>
-            <button type="button" id="quality-filter-degraded" aria-pressed="false" onclick="setQualityFilter('degraded')">降智</button>
-            <button type="button" id="quality-filter-risk" aria-pressed="false" onclick="setQualityFilter('risk')">风控</button>
-            <button type="button" id="quality-filter-error" aria-pressed="false" onclick="setQualityFilter('error')">失败</button>
-          </div>
-        </div>
-        <div class="sso-table-wrap">
-          <table class="sso-table">
-            <thead><tr><th>邮箱</th><th>判定</th><th>TPS</th><th>thinking</th><th>tokens</th><th>耗时</th><th>说明</th></tr></thead>
-            <tbody id="quality-body"><tr><td colspan="7" class="sso-empty">选择 auth 目录后开始测试</td></tr></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </section>
-
   <section class="metric-grid panel-gap" id="kpis" aria-label="核心指标"></section>
 
   <section class="card panel rate-panel">
@@ -2757,24 +2517,19 @@ HTML = r"""<!DOCTYPE html>
     <div class="progress-sub" id="prog-sub"></div>
   </section>
 
-  <section class="card panel recovery-panel" aria-labelledby="recovery-title">
+  <section class="card panel export-panel" aria-labelledby="export-title">
     <div class="section-head">
-      <h2 id="recovery-title">账号补录</h2>
-      <span class="section-meta mono" id="recovery-status">等待检查</span>
+      <h2 id="export-title">账号导出</h2>
+      <span class="section-meta mono" id="export-status">就绪</span>
     </div>
     <div class="recovery-layout">
-      <div class="chips" id="recovery-kpis"></div>
+      <div class="chips" id="export-kpis"></div>
       <div class="button-group recovery-actions">
-        <button id="recovery-pending" onclick="startRecovery('pending')">补录待处理</button>
-        <button id="recovery-accounts" onclick="startRecovery('accounts')">扫描全部账号</button>
-        <button id="export-sso" onclick="downloadAccountExport('/api/accounts/export-sso')" title="每行一个 API Key (key.txt)">导出 key.txt</button>
+        <button class="primary" id="export-sso" onclick="downloadAccountExport('/api/accounts/export-sso')" title="每行一个 API Key (key.txt)">导出 key.txt</button>
         <button id="export-credentials" onclick="downloadAccountExport('/api/accounts/export-credentials-csv')" title="导出全部账号的 email、passwd、api_key 列 (account.csv)">导出账号 CSV</button>
-        <button id="export-cpa-auth" onclick="downloadAccountExport('/api/accounts/export-cpa-auth')" title="打包导出全部 xai-*.json CPA 凭证">导出 CPA 凭证</button>
-        <button id="export-grok2api-auth" onclick="downloadAccountExport('/api/accounts/export-grok2api-auth')" title="打包导出全部 g2a-*.json Grok2API 凭证">导出 Grok2API 凭证</button>
-        <button class="danger" id="recovery-stop" onclick="stopRecovery()">停止补录</button>
       </div>
     </div>
-    <div class="msg" id="recovery-msg" role="status" aria-live="polite"></div>
+    <div class="msg" id="export-msg" role="status" aria-live="polite"></div>
   </section>
 
   <section class="card panel account-login-panel" aria-labelledby="account-login-title">
@@ -2784,42 +2539,24 @@ HTML = r"""<!DOCTYPE html>
     </div>
     <div class="account-login-controls">
       <div class="field">
-        <label for="account-login-input">账号密码（SSO 可选）</label>
-        <textarea class="account-login-input mono" id="account-login-input" placeholder="email----password&#10;email----password----sso&#10;email,password,sso"></textarea>
+        <label for="account-login-input">账号密码</label>
+        <textarea class="account-login-input mono" id="account-login-input" placeholder="email----password&#10;email,password"></textarea>
       </div>
       <div class="account-login-side">
         <div class="account-login-options">
           <div class="field">
-            <label for="account-login-concurrency">登录并发</label>
+            <label for="account-login-concurrency">并发数</label>
             <input id="account-login-concurrency" type="number" min="1" max="5" value="1">
           </div>
-          <label class="inline-check" for="account-login-cpa">
-            <input id="account-login-cpa" type="checkbox" checked>
-            <span>提取 CPA / Grok2API</span>
-          </label>
         </div>
         <div class="button-group account-login-actions">
           <button class="primary" id="account-login-import" onclick="importAccountLoginInput()">导入账号</button>
           <button id="account-login-select-all" onclick="toggleAccountLoginSelectAll()">全选</button>
           <button id="account-login-start-selected" onclick="startAccountLogin('selected')">登录选中</button>
-          <button id="account-login-start-pending" onclick="startAccountLogin('sso_missing')">重新登录 SSO 缺失</button>
-          <button id="account-login-start-cpa-missing" onclick="startAccountLogin('cpa_missing')">补录 CPA 缺失</button>
-          <button class="primary" id="account-sso-check-start" onclick="startAccountSsoCheck()">检测全部 SSO</button>
-          <button id="account-sso-select-invalid" onclick="selectInvalidAccounts()">选择失效 / 无 SSO</button>
           <button class="danger" id="account-login-stop" onclick="stopAccountLogin()">停止</button>
           <button class="danger" id="account-login-delete" onclick="deleteAccountLoginSelected()">删除选中</button>
-          <button class="danger" id="account-sso-delete-invalid" onclick="deleteInvalidAccounts()">清理选中失效账号</button>
           <button id="account-login-refresh" onclick="refreshAccountLogin(true)">刷新</button>
         </div>
-      </div>
-    </div>
-    <div class="account-sso-match">
-      <div class="field">
-        <label for="account-sso-match-input">旧 SSO 校验与账号匹配</label>
-        <textarea class="account-sso-match-input mono" id="account-sso-match-input" placeholder="每行一个 SSO"></textarea>
-      </div>
-      <div class="button-group account-login-actions" style="margin-top:8px">
-        <button class="primary" id="account-sso-match-start" onclick="startAccountSsoMatch()">校验可用 SSO</button>
       </div>
     </div>
     <div class="chips account-login-summary" id="account-login-kpis"></div>
@@ -2836,8 +2573,8 @@ HTML = r"""<!DOCTYPE html>
     </div>
     <div class="account-login-table-wrap">
       <table class="account-login-table">
-        <thead><tr><th>选择</th><th>邮箱</th><th>来源</th><th>状态</th><th>SSO</th><th>本地 Auth</th><th>SSO 检测</th><th>最近结果</th><th>更新时间</th></tr></thead>
-        <tbody id="account-login-body"><tr><td colspan="9" class="account-login-empty">暂无账号</td></tr></tbody>
+        <thead><tr><th>选择</th><th>邮箱</th><th>来源</th><th>状态</th><th>API Key</th><th>更新时间</th></tr></thead>
+        <tbody id="account-login-body"><tr><td colspan="6" class="account-login-empty">暂无账号</td></tr></tbody>
       </table>
     </div>
     <div class="section-head account-login-log-head">
@@ -2845,59 +2582,6 @@ HTML = r"""<!DOCTYPE html>
       <span class="section-meta mono" id="account-login-log-name">暂无日志</span>
     </div>
     <div class="tail mono account-login-log" id="account-login-tail">暂无登录日志</div>
-  </section>
-
-  <section class="card panel" aria-labelledby="quality-dash-title">
-    <div class="section-head">
-      <h2 id="quality-dash-title">降智测试</h2>
-      <span class="section-meta mono" id="quality-dash-status">家宽实聊</span>
-    </div>
-    <p style="margin:0 0 10px;color:var(--muted);font-size:13px;line-height:1.5">
-      入库短测默认关，打开开关才测。面板用于复测存量号：短题、见到 thinking 即停；有 thinking 为正常，没有为降智；401/403 记为风控。
-    </p>
-    <div class="chips" id="quality-dash-kpis"></div>
-    <div class="button-group" style="margin-top:10px">
-      <button class="primary" onclick="toggleQualityView()">打开测试面板</button>
-      <button onclick="refreshQuality()">刷新</button>
-    </div>
-  </section>
-
-  <section class="card panel" aria-labelledby="sso-dash-title">
-    <div class="section-head">
-      <h2 id="sso-dash-title">SSO 风控（已停用）</h2>
-      <span class="section-meta mono" id="sso-dash-status">不再判定</span>
-    </div>
-    <p style="margin:0 0 10px;color:var(--muted);font-size:13px;line-height:1.5">
-      grok.com <code>botFlagSource</code> / <code>policy=deny</code> 已不能判断风控，注册也不会再据此拦截。仅保留对照扫描。
-    </p>
-    <div class="chips" id="sso-dash-kpis"></div>
-    <div class="button-group" style="margin-top:10px">
-      <button onclick="toggleSsoView()">打开旧面板</button>
-      <button onclick="refreshSsoState()">刷新</button>
-    </div>
-  </section>
-
-  <section class="card panel" aria-labelledby="bfs-title">
-    <div class="section-head">
-      <h2 id="bfs-title">BFS 检测</h2>
-      <span class="section-meta mono" id="bfs-status">JWT claim</span>
-    </div>
-    <p style="margin:0 0 10px;color:var(--muted);font-size:13px;line-height:1.5">
-      解码 CPA / Grok2API auth 中的 access_token，检查是否含 <code>bfs</code> claim（与 botFlagSource 独立）。
-      注册换 token 后会自动检测并写入 <code>accounts/sso_bfs_flagged.txt</code>。
-    </p>
-    <div class="chips" id="bfs-kpis"></div>
-    <div class="button-group" style="margin-top:10px">
-      <button id="bfs-scan" onclick="runBfsScan()">扫描 auth 目录</button>
-      <button onclick="refreshBfs()">刷新状态</button>
-    </div>
-    <div class="msg" id="bfs-msg" role="status" aria-live="polite"></div>
-    <div class="table-scroll" style="margin-top:10px;max-height:220px">
-      <table>
-        <thead><tr><th>邮箱</th><th>bfs</th><th>来源</th><th>文件</th></tr></thead>
-        <tbody id="bfs-body"></tbody>
-      </table>
-    </div>
   </section>
 
   <div class="three panel-gap">
@@ -3018,31 +2702,23 @@ function setTheme(theme) {
   syncThemeButtons();
 }
 function setAppView(view, options = {}) {
-  if (view !== "dashboard" && view !== "help" && view !== "proxies" && view !== "domains" && view !== "sso" && view !== "quality") return;
+  if (view !== "dashboard" && view !== "help" && view !== "proxies" && view !== "domains") return;
   const dashboard = document.getElementById("dashboard-view");
   const help = document.getElementById("help-view");
   const proxies = document.getElementById("proxy-view");
   const domains = document.getElementById("domain-view");
-  const sso = document.getElementById("sso-view");
-  const quality = document.getElementById("quality-view");
   const domainToggle = document.getElementById("domain-view-toggle");
   const domainLabel = document.getElementById("domain-view-label");
   const toggle = document.getElementById("help-view-toggle");
   const label = document.getElementById("help-view-label");
   const proxyToggle = document.getElementById("proxy-view-toggle");
   const proxyLabel = document.getElementById("proxy-view-label");
-  const ssoToggle = document.getElementById("sso-view-toggle");
-  const ssoLabel = document.getElementById("sso-view-label");
-  const qualityToggle = document.getElementById("quality-view-toggle");
-  const qualityLabel = document.getElementById("quality-view-label");
-  if (!dashboard || !help || !proxies || !domains || !sso || !quality || !domainToggle || !domainLabel || !toggle || !label || !proxyToggle || !proxyLabel || !ssoToggle || !ssoLabel || !qualityToggle || !qualityLabel) return;
+  if (!dashboard || !help || !proxies || !domains || !domainToggle || !domainLabel || !toggle || !label || !proxyToggle || !proxyLabel) return;
   const isHelp = view === "help";
   const isProxies = view === "proxies";
   const isDomains = view === "domains";
-  const isSso = view === "sso";
-  const isQuality = view === "quality";
-  const isOverlay = isHelp || isProxies || isDomains || isSso || isQuality;
-  const dashboardChildren = Array.from(dashboard.children).filter(element => element !== help && element !== proxies && element !== domains && element !== sso && element !== quality);
+  const isOverlay = isHelp || isProxies || isDomains;
+  const dashboardChildren = Array.from(dashboard.children).filter(element => element !== help && element !== proxies && element !== domains);
   dashboardChildren.forEach(element => {
     element.inert = isOverlay;
     if (isOverlay) element.setAttribute("aria-hidden", "true");
@@ -3054,15 +2730,9 @@ function setAppView(view, options = {}) {
   proxies.inert = !isProxies;
   domains.hidden = !isDomains;
   domains.inert = !isDomains;
-  sso.hidden = !isSso;
-  sso.inert = !isSso;
-  quality.hidden = !isQuality;
-  quality.inert = !isQuality;
   document.body.classList.toggle("help-view-open", isHelp);
   document.body.classList.toggle("proxy-view-open", isProxies);
   document.body.classList.toggle("domain-view-open", isDomains);
-  document.body.classList.toggle("sso-view-open", isSso);
-  document.body.classList.toggle("quality-view-open", isQuality);
   toggle.dataset.active = String(isHelp);
   toggle.setAttribute("aria-expanded", String(isHelp));
   toggle.setAttribute("aria-label", isHelp ? "返回控制台" : "打开问题和使用");
@@ -3078,16 +2748,6 @@ function setAppView(view, options = {}) {
   domainToggle.setAttribute("aria-label", isDomains ? "返回控制台" : "打开邮箱服务");
   domainToggle.title = isDomains ? "返回控制台" : "邮箱服务";
   domainLabel.textContent = isDomains ? "返回控制台" : "邮箱服务";
-  ssoToggle.dataset.active = String(isSso);
-  ssoToggle.setAttribute("aria-expanded", String(isSso));
-  ssoToggle.setAttribute("aria-label", isSso ? "返回控制台" : "打开 SSO 风控（已停用）");
-  ssoToggle.title = isSso ? "返回控制台" : "SSO 风控（已停用）";
-  ssoLabel.textContent = isSso ? "返回控制台" : "SSO 风控";
-  qualityToggle.dataset.active = String(isQuality);
-  qualityToggle.setAttribute("aria-expanded", String(isQuality));
-  qualityToggle.setAttribute("aria-label", isQuality ? "返回控制台" : "打开降智测试");
-  qualityToggle.title = isQuality ? "返回控制台" : "降智测试";
-  qualityLabel.textContent = isQuality ? "返回控制台" : "降智测试";
   if (options.persist !== false) {
     try { localStorage.setItem(APP_VIEW_KEY, view); } catch (e) {}
   }
@@ -3096,13 +2756,11 @@ function setAppView(view, options = {}) {
     refreshEmailProvider();
     refreshEmailDomains();
   }
-  if (isSso) refreshSsoState();
-  if (isQuality) refreshQuality();
   if (options.focus) {
     requestAnimationFrame(() => {
       const target = isHelp
         ? document.querySelector('[data-help-tab][aria-selected="true"]')
-        : (isProxies ? document.getElementById("proxy-input") : (isDomains ? document.getElementById("mail-provider-select") : (isSso ? document.getElementById("sso-input") : (isQuality ? document.getElementById("quality-start") : (view === "dashboard" ? domainToggle : toggle)))));
+        : (isProxies ? document.getElementById("proxy-input") : (isDomains ? document.getElementById("mail-provider-select") : (view === "dashboard" ? domainToggle : toggle)));
       if (target) target.focus();
     });
   }
@@ -3118,14 +2776,6 @@ function toggleProxyView() {
 function toggleDomainView() {
   const isDomains = document.body.classList.contains("domain-view-open");
   setAppView(isDomains ? "dashboard" : "domains", { focus: true });
-}
-function toggleSsoView() {
-  const isSso = document.body.classList.contains("sso-view-open");
-  setAppView(isSso ? "dashboard" : "sso", { focus: true });
-}
-function toggleQualityView() {
-  const isQuality = document.body.classList.contains("quality-view-open");
-  setAppView(isQuality ? "dashboard" : "quality", { focus: true });
 }
 function setHelpTab(name) {
   if (name !== "guide" && name !== "faq") return;
@@ -3181,13 +2831,13 @@ function initHelp() {
     view = localStorage.getItem(APP_VIEW_KEY) || "dashboard";
     tab = localStorage.getItem(HELP_TAB_KEY) || "guide";
   } catch (e) {}
-  if (!["dashboard", "help", "proxies", "domains", "sso", "quality"].includes(view)) view = "dashboard";
+  if (!["dashboard", "help", "proxies", "domains"].includes(view)) view = "dashboard";
   setHelpTab(tab);
   filterFaq("");
   setAppView(view, { persist: false, focus: false });
 }
 document.addEventListener("keydown", event => {
-  if (event.key === "Escape" && (document.body.classList.contains("help-view-open") || document.body.classList.contains("proxy-view-open") || document.body.classList.contains("domain-view-open") || document.body.classList.contains("sso-view-open") || document.body.classList.contains("quality-view-open"))) {
+  if (event.key === "Escape" && (document.body.classList.contains("help-view-open") || document.body.classList.contains("proxy-view-open") || document.body.classList.contains("domain-view-open"))) {
     setAppView("dashboard", { focus: true });
   }
 });
@@ -3780,48 +3430,7 @@ async function refreshStats(authHelp = true) {
     } catch (e) { setMsg("stats-msg", String(e.message || e), "err"); }
   });
 }
-function renderRecovery(data) {
-  data = data || {};
-  const report = data.last_report || {};
-  document.getElementById("recovery-kpis").innerHTML = [
-    ["待处理", data.pending_count ?? 0, (data.pending_count || 0) > 0 ? "warn" : "ok"],
-    ["账号记录", data.account_record_count ?? 0, ""],
-    ["可补录", data.recoverable_count ?? 0, (data.recoverable_count || 0) > 0 ? "accent" : "ok"],
-    ["上次成功", report.success_count ?? "--", "ok"],
-    ["上次失败", report.failure_count ?? "--", (report.failure_count || 0) > 0 ? "fail" : ""],
-  ].map(([label, value, cls]) => `<div class="chip"><span>${esc(label)}</span><b class="${cls}">${esc(value)}</b></div>`).join("");
-  document.getElementById("recovery-status").textContent = data.running ? ("补录中 #" + (data.pid || "?")) : "空闲";
-  document.getElementById("recovery-pending").disabled = !!data.running || !(data.pending_count > 0);
-  document.getElementById("recovery-accounts").disabled = !!data.running || !(data.recoverable_count > 0);
-  document.getElementById("recovery-stop").disabled = !data.running;
-}
-async function refreshRecovery() {
-  return refreshOnce("recovery", async () => {
-    try {
-      const data = await api("/api/recovery?_=" + Date.now(), { authHelp: false });
-      renderRecovery(data);
-    } catch (e) {
-      const message = String(e.message || e);
-      document.getElementById("recovery-status").textContent = message.includes("令牌") ? "等待令牌" : "检查失败";
-    }
-  });
-}
-async function startRecovery(scope) {
-  if (scope === "accounts" && !confirm("扫描全部账号文本并补录缺失 CPA？此操作可能持续较长时间。")) return;
-  setMsg("recovery-msg", "正在启动补录…", "");
-  try {
-    const data = await api("/api/recovery/start", { method: "POST", body: JSON.stringify({ scope }) });
-    setMsg("recovery-msg", "补录已启动，共 " + (data.input_count || 0) + " 条", "ok");
-    await refreshRecovery();
-  } catch (e) { setMsg("recovery-msg", String(e.message || e), "err"); }
-}
-async function stopRecovery() {
-  try {
-    const data = await api("/api/recovery/stop", { method: "POST", body: "{}" });
-    setMsg("recovery-msg", "补录已停止，结束进程 " + JSON.stringify(data.killed || []), "ok");
-    await refreshRecovery();
-  } catch (e) { setMsg("recovery-msg", String(e.message || e), "err"); }
-}
+
 function accountLoginStatusLabel(status) {
   return ({
     pending: "待处理", queued: "排队中", running: "登录中", success: "CPA 成功",
@@ -3889,43 +3498,29 @@ function renderAccountLogin(data) {
   const summary = accountLoginData.summary || {};
   document.getElementById("account-login-kpis").innerHTML = [
     ["总数", summary.total ?? 0, ""],
-    ["SSO 缺失", summary.sso_missing ?? summary.pending ?? 0, (summary.sso_missing || summary.pending || 0) > 0 ? "warn" : ""],
-    ["CPA 缺失", summary.cpa_missing ?? 0, (summary.cpa_missing || 0) > 0 ? "accent" : "ok"],
+    ["待登录", summary.pending ?? 0, (summary.pending || 0) > 0 ? "warn" : ""],
     ["运行中", (summary.queued || 0) + (summary.running || 0), accountLoginData.running ? "accent" : ""],
-    ["SSO 成功", summary.sso_success ?? 0, "ok"],
-    ["CPA 成功", summary.cpa_success ?? 0, "ok"],
-    ["SSO 有效", summary.sso_valid ?? 0, "ok"],
-    ["SSO 失效", summary.sso_invalid ?? 0, (summary.sso_invalid || 0) > 0 ? "fail" : ""],
+    ["已登录", summary.success ?? 0, "ok"],
     ["失败", summary.failed ?? 0, (summary.failed || 0) > 0 ? "fail" : ""],
   ].map(([label, value, cls]) => `<div class="chip"><span>${esc(label)}</span><b class="${cls}">${esc(value)}</b></div>`).join("");
   document.getElementById("account-login-source-filter").value = accountLoginSourceFilter;
   document.getElementById("account-login-filter-count").textContent = `${items.length} / ${allItems.length}`;
   const lastReport = accountLoginData.last_report || {};
-  const ssoCheck = accountLoginData.sso_check || {};
   const statusText = accountLoginData.running
-    ? (((accountLoginData.job_kind === "sso_check" ? "库存 SSO 检测中 #" : (accountLoginData.job_kind === "sso_match" ? "SSO 校验中 #" : "登录中 #"))) + (accountLoginData.pid || "?"))
-    : (ssoCheck.finished_at
-      ? (`SSO 检测完成 · 有效 ${ssoCheck.valid_count || 0} · 失效 ${ssoCheck.invalid_count || 0}`)
-    : (lastReport.fatal_error
-      ? ("启动失败: " + lastReport.fatal_error)
-      : (lastReport.job_kind === "sso_match"
-        ? (`校验完成 · 可用 ${lastReport.matched_count || 0} · 不可用 ${lastReport.unusable_count || 0} · 未匹配 ${lastReport.unmatched_count || 0} · 失败 ${lastReport.failure_count || 0}`)
-        : (lastReport.log ? ("空闲 · 日志 " + lastReport.log) : "空闲"))));
+    ? ("登录中 #" + (accountLoginData.pid || "?"))
+    : (lastReport.fatal_error ? ("启动失败: " + lastReport.fatal_error) : (lastReport.log ? ("空闲 · 日志 " + lastReport.log) : "空闲"));
   document.getElementById("account-login-status").textContent = statusText;
   document.getElementById("account-login-body").innerHTML = items.length ? items.map(item => {
-    const statusClass = item.status === "failed" ? "fail" : (item.status === "success" || item.status === "sso_only" ? "ok" : (item.status === "running" || item.status === "queued" ? "accent" : ""));
+    const statusClass = item.status === "failed" ? "fail" : (item.status === "success" ? "ok" : (item.status === "running" || item.status === "queued" ? "accent" : ""));
     return `<tr>
       <td><input class="account-select" type="checkbox" aria-label="选择 ${esc(item.email)}" ${selectedAccountLoginIds.has(item.id) ? "checked" : ""} onchange="toggleAccountLoginSelection('${esc(item.id)}', this.checked)"></td>
       <td class="mono">${esc(item.email)}</td>
       <td>${esc(accountSourceLabel(item.source))}</td>
       <td class="${statusClass}">${esc(accountLoginStatusLabel(item.status))}</td>
-      <td>${item.has_sso ? '<span class="ok">已提取</span>' : '--'}</td>
-      <td>${item.cpa_local ? '<span class="ok">CPA</span>' : '--'}${item.grok2api_local ? ' <span class="ok">G2A</span>' : ''}</td>
-      <td>${accountSsoCheckLabel(item)}</td>
-      <td class="account-login-result">${esc(item.sso_check_error || item.last_error || "--")}</td>
+      <td class="mono">${item.has_sso ? '<span class="ok">已提取</span>' : '--'}</td>
       <td class="mono">${esc(accountLoginTime(item.updated_at))}</td>
     </tr>`;
-  }).join("") : '<tr><td colspan="9" class="account-login-empty">暂无账号</td></tr>';
+  }).join("") : '<tr><td colspan="6" class="account-login-empty">暂无账号</td></tr>';
   const logTail = document.getElementById("account-login-tail");
   const logLines = Array.isArray(accountLoginData.log_tail) ? accountLoginData.log_tail : [];
   const logText = (accountLoginData.log_tail_truncated ? "[... earlier log lines omitted ...]\n" : "")
@@ -3941,26 +3536,15 @@ function renderAccountLogin(data) {
   const allSelected = items.length > 0 && items.every(item => selectedAccountLoginIds.has(item.id));
   document.getElementById("account-login-import").disabled = running;
   document.getElementById("account-login-input").disabled = running;
-  document.getElementById("account-sso-match-input").disabled = running;
-  document.getElementById("account-sso-match-start").disabled = running || items.length === 0;
   document.getElementById("account-login-select-all").disabled = items.length === 0;
   document.getElementById("account-login-select-all").textContent = allSelected ? "取消全选" : "全选";
   document.getElementById("account-login-start-selected").disabled = running || selected === 0;
-  document.getElementById("account-login-start-pending").disabled = running || !(summary.sso_missing > 0);
-  document.getElementById("account-login-start-cpa-missing").disabled = running || !(summary.cpa_missing > 0);
-  document.getElementById("account-sso-check-start").disabled = running || items.length === 0;
-  const cleanupEligible = items.filter(item => item.sso_check_status === "invalid" || !item.has_sso);
-  document.getElementById("account-sso-select-invalid").disabled = cleanupEligible.length === 0;
   document.getElementById("account-login-stop").disabled = !running;
   const selectedImported = items.filter(item => selectedAccountLoginIds.has(item.id) && item.login_eligible !== false).length;
   document.getElementById("account-login-delete").disabled = running || selected === 0 || selectedImported !== selected;
-  const selectedInvalid = items.filter(item => selectedAccountLoginIds.has(item.id) && (item.sso_check_status === "invalid" || !item.has_sso)).length;
-  document.getElementById("account-sso-delete-invalid").disabled = running || selectedInvalid === 0 || selectedInvalid !== selected;
 }
 let accountLoginRefreshPromise = null;
 async function refreshAccountLogin(authHelp = false) {
-  // Do not let the five-second poll create a queue when a large inventory is
-  // still being read.  A later poll will pick up the newest state.
   if (accountLoginRefreshPromise) return accountLoginRefreshPromise;
   accountLoginRefreshPromise = (async () => {
     try {
@@ -3983,29 +3567,7 @@ async function importAccountLoginInput() {
   try {
     const data = await api("/api/account-login/import", { method: "POST", body: JSON.stringify({ accounts: value }) });
     input.value = "";
-    setMsg("account-login-msg", `已导入：新增 ${data.added || 0}，更新 ${data.updated || 0}，未变 ${data.unchanged || 0}，含 SSO ${data.sso_imported || 0}`, "ok");
-    await refreshAccountLogin(false);
-  } catch (e) { setMsg("account-login-msg", String(e.message || e), "err"); }
-}
-async function startAccountSsoMatch() {
-  const input = document.getElementById("account-sso-match-input");
-  const value = input.value || "";
-  if (!value.trim()) { setMsg("account-login-msg", "请输入 SSO", "err"); return; }
-  setMsg("account-login-msg", "正在启动 SSO 校验任务…", "");
-  try {
-    const data = await api("/api/account-login/match-sso", { method: "POST", body: JSON.stringify({ sso: value }) });
-    input.value = "";
-    setMsg("account-login-msg", "SSO 校验任务已启动，共 " + (data.input_count || 0) + " 条", "ok");
-    await refreshAccountLogin(false);
-  } catch (e) { setMsg("account-login-msg", String(e.message || e), "err"); }
-}
-async function startAccountSsoCheck() {
-  const concurrency = Number(document.getElementById("account-login-concurrency").value || 1);
-  if (!confirm(`检测账号管理中的全部 SSO？将使用登录并发 ${concurrency} 换取令牌，期间不能运行注册或账号任务。`)) return;
-  setMsg("account-login-msg", "正在启动全部 SSO 检测…", "");
-  try {
-    const data = await api("/api/account-login/sso-check", { method: "POST", body: JSON.stringify({ concurrency }) });
-    setMsg("account-login-msg", `SSO 检测已启动，共 ${data.input_count || 0} 个账号，并发 ${data.concurrency || 1}`, "ok");
+    setMsg("account-login-msg", `已导入：新增 ${data.added || 0}，更新 ${data.updated || 0}，未变 ${data.unchanged || 0}`, "ok");
     await refreshAccountLogin(false);
   } catch (e) { setMsg("account-login-msg", String(e.message || e), "err"); }
 }
@@ -4013,18 +3575,12 @@ async function startAccountLogin(scope) {
   const selectedIds = scope === "selected" ? selectedAccountLoginList() : [];
   const selectedItems = (accountLoginData && accountLoginData.items) || [];
   const ids = scope === "selected" ? selectedItems.filter(item => selectedIds.includes(item.id) && item.login_eligible !== false).map(item => item.id) : [];
-  if (scope === "selected" && selectedIds.length && ids.length !== selectedIds.length) {
-    setMsg("account-login-msg", "任务注册账号没有导入密码，不能启动浏览器登录；可直接检测或清理", "err");
-    return;
-  }
   if (scope === "selected" && !ids.length) { setMsg("account-login-msg", "请先选择账号", "err"); return; }
   const concurrency = Number(document.getElementById("account-login-concurrency").value || 1);
-  const extractCpa = document.getElementById("account-login-cpa").checked;
-  setMsg("account-login-msg", scope === "cpa_missing" ? "正在启动 CPA 补录任务…" : "正在启动登录任务…", "");
+  setMsg("account-login-msg", "正在启动登录任务…", "");
   try {
-    const data = await api("/api/account-login/start", { method: "POST", body: JSON.stringify({ ids, scope, concurrency, extract_cpa: extractCpa }) });
-    const taskLabel = scope === "cpa_missing" ? "CPA 补录任务" : "登录任务";
-    setMsg("account-login-msg", taskLabel + "已启动，共 " + (data.input_count || 0) + " 个账号", "ok");
+    const data = await api("/api/account-login/start", { method: "POST", body: JSON.stringify({ ids, scope, concurrency }) });
+    setMsg("account-login-msg", "登录任务已启动，共 " + (data.input_count || 0) + " 个账号", "ok");
     await refreshAccountLogin(false);
   } catch (e) { setMsg("account-login-msg", String(e.message || e), "err"); }
 }
@@ -4038,7 +3594,7 @@ async function stopAccountLogin() {
 async function deleteAccountLoginSelected() {
   const ids = selectedAccountLoginList();
   if (!ids.length) { setMsg("account-login-msg", "请先选择账号", "err"); return; }
-  if (!confirm("删除选中的导入账号记录？已生成的 accounts/ 和 auth 文件不会删除。")) return;
+  if (!confirm("删除选中的导入账号记录？")) return;
   try {
     const data = await api("/api/account-login/delete", { method: "POST", body: JSON.stringify({ ids }) });
     selectedAccountLoginIds.clear();
@@ -4046,26 +3602,9 @@ async function deleteAccountLoginSelected() {
     await refreshAccountLogin(false);
   } catch (e) { setMsg("account-login-msg", String(e.message || e), "err"); }
 }
-async function deleteInvalidAccounts() {
-  const items = (accountLoginData && accountLoginData.items) || [];
-  const ids = selectedAccountLoginList();
-  const invalid = items.filter(item => ids.includes(item.id) && (item.sso_check_status === "invalid" || !item.has_sso));
-  if (!ids.length || invalid.length !== ids.length) {
-    setMsg("account-login-msg", "只能清理换令牌失败或没有 SSO 的账号", "err");
-    return;
-  }
-  if (!confirm(`永久清理选中的 ${ids.length} 个失效账号？将删除本地账号文件、账密库存、SSO、CPA 和 Grok2API 数据。`)) return;
-  try {
-    const data = await api("/api/account-login/delete-invalid", { method: "POST", body: JSON.stringify({ ids }) });
-    selectedAccountLoginIds.clear();
-    const warning = data.remote_cpa_not_deleted ? "；远程 CPA 需手动清理" : "";
-    setMsg("account-login-msg", `已清理 ${data.deleted || 0} 个账号、本地文件 ${(data.removed_files || []).length} 个${warning}`, data.errors && data.errors.length ? "err" : "ok");
-    await refreshAccountLogin(false);
-  } catch (e) { setMsg("account-login-msg", String(e.message || e), "err"); }
-}
 
 async function downloadAccountExport(path) {
-  setMsg("recovery-msg", "正在生成导出文件…", "");
+  setMsg("export-msg", "正在生成导出文件…", "");
   try {
     const headers = {};
     const token = getToken();
@@ -4087,332 +3626,10 @@ async function downloadAccountExport(path) {
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-    setMsg("recovery-msg", "导出已生成", "ok");
+    setMsg("export-msg", "导出已生成: " + filename, "ok");
   } catch (error) {
-    setMsg("recovery-msg", String(error.message || error), "err");
+    setMsg("export-msg", String(error.message || error), "err");
   }
-}
-
-function renderBfs(data) {
-  data = data || {};
-  const last = data.last_report || {};
-  const rj = data.results_jsonl || {};
-  const el = document.getElementById("bfs-kpis");
-  if (!el) return;
-  el.innerHTML = [
-    ["上次扫描", last.total ?? "--", ""],
-    ["BFS", last.bfs_count ?? "--", (last.bfs_count || 0) > 0 ? "warn" : "ok"],
-    ["Clean", last.clean_count ?? "--", "ok"],
-    ["比率", last.bfs_rate != null ? (last.bfs_rate + "%") : "--", (last.bfs_rate || 0) > 0 ? "warn" : ""],
-    ["队列文件", data.flagged_file_count ?? 0, (data.flagged_file_count || 0) > 0 ? "warn" : ""],
-    ["jsonl bfs", rj.bfs ?? 0, (rj.bfs || 0) > 0 ? "warn" : ""],
-  ].map(([label, value, cls]) => `<div class="chip"><span>${esc(label)}</span><b class="${cls}">${esc(value)}</b></div>`).join("");
-  const st = document.getElementById("bfs-status");
-  if (st) st.textContent = last.scanned_at ? ("扫描 " + last.scanned_at) : "尚未扫描";
-  const body = document.getElementById("bfs-body");
-  if (body && Array.isArray(data.items)) {
-    const rows = data.items.filter(it => it.has_bfs).slice(0, 50);
-    body.innerHTML = rows.length ? rows.map(it =>
-      `<tr><td class="mono">${esc(it.email || "-")}</td><td class="warn">${esc(it.bfs != null ? it.bfs : "yes")}</td><td class="mono">${esc(it.source || "")}</td><td class="mono">${esc(it.file || "")}</td></tr>`
-    ).join("") : '<tr><td colspan="4" style="color:var(--muted)">无 bfs 记录（先点扫描）</td></tr>';
-  }
-}
-async function refreshBfs(authHelp = false) {
-  return refreshOnce("bfs", async () => {
-    try {
-      const data = await api("/api/bfs?_=" + Date.now(), { authHelp });
-      renderBfs(data);
-    } catch (e) {
-      const st = document.getElementById("bfs-status");
-      if (st) st.textContent = String(e.message || e).includes("令牌") ? "等待令牌" : "检查失败";
-    }
-  });
-}
-async function runBfsScan() {
-  setMsg("bfs-msg", "正在扫描 CPA / Grok2API auth …", "");
-  const btn = document.getElementById("bfs-scan");
-  if (btn) btn.disabled = true;
-  try {
-    const data = await api("/api/bfs/scan", { method: "POST", body: JSON.stringify({}) });
-    renderBfs(Object.assign({}, data, { last_report: data, items: data.items || [] }));
-    setMsg("bfs-msg",
-      "完成 total=" + (data.total ?? 0) +
-      " bfs=" + (data.bfs_count ?? 0) +
-      " clean=" + (data.clean_count ?? 0) +
-      " rate=" + (data.bfs_rate ?? 0) + "%" +
-      (data.export_path ? (" → " + data.export_path) : ""),
-      "ok");
-  } catch (e) {
-    setMsg("bfs-msg", String(e.message || e), "err");
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
-function setSsoSource(source) {
-  if (!["paste", "pending", "accounts", "risk"].includes(source)) return;
-  ssoSource = source;
-  ["paste", "pending", "accounts", "risk"].forEach(name => {
-    const btn = document.getElementById("sso-src-" + name);
-    if (btn) btn.setAttribute("aria-pressed", String(name === source));
-  });
-  const hint = document.getElementById("sso-source-hint");
-  const counts = (lastSsoState && lastSsoState.sources) || {};
-  const labels = {
-    paste: "已停用。粘贴 JWT 仅对照历史 botFlag 字段，不能判断是否可聊。",
-    pending: "扫描 accounts/sso_pending.txt（待补录队列，" + (counts.pending ?? 0) + " 行）。",
-    accounts: "扫描 accounts/*.txt，不含已隔离风控和 bfs 名单（" + (counts.accounts ?? 0) + " 行）。",
-    risk: "复检 accounts/sso_risk_rejected.txt（已隔离，" + (counts.risk ?? 0) + " 行）。",
-  };
-  if (hint) hint.textContent = labels[source] || labels.paste;
-}
-function setSsoFilter(name) {
-  if (!["all", "flagged", "clean", "error"].includes(name)) return;
-  ssoFilter = name;
-  ["all", "flagged", "clean", "error"].forEach(key => {
-    const btn = document.getElementById("sso-filter-" + key);
-    if (btn) btn.setAttribute("aria-pressed", String(key === name));
-  });
-  renderSsoRows(lastSsoState);
-}
-function renderSsoState(data) {
-  data = data || {};
-  lastSsoState = data;
-  const sum = data.summary || {};
-  const running = !!data.running;
-  const setText = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value; };
-  setText("sso-kpi-total", sum.total ?? data.total ?? "--");
-  setText("sso-kpi-clean", sum.clean_count ?? "--");
-  setText("sso-kpi-flagged", sum.flagged_count ?? "--");
-  setText("sso-kpi-denied", sum.denied_count ?? "--");
-  setText("sso-kpi-error", sum.error_count ?? "--");
-  const progress = (data.progress || 0) + "/" + (data.total || sum.total || 0);
-  setText("sso-kpi-progress", running ? progress : (sum.total ? String(sum.total) : "--"));
-  const status = running
-    ? ("扫描中 " + progress)
-    : (data.error ? String(data.error) : (sum.scanned_at ? ("上次 " + sum.scanned_at) : "尚未扫描"));
-  setText("sso-heading-status", status);
-  setText("sso-job-status", status);
-  setText("sso-dash-status", running ? "扫描中" : (sum.scanned_at || "grok.com botFlag"));
-  const dash = document.getElementById("sso-dash-kpis");
-  if (dash) {
-    dash.innerHTML = [
-      ["总数", sum.total ?? 0, ""],
-      ["干净", sum.clean_count ?? 0, "ok"],
-      ["标记", sum.flagged_count ?? 0, (sum.flagged_count || 0) > 0 ? "fail" : ""],
-      ["deny", sum.denied_count ?? 0, (sum.denied_count || 0) > 0 ? "warn" : ""],
-    ].map(([label, value, cls]) => `<div class="chip"><span>${esc(label)}</span><b class="${cls}">${esc(value)}</b></div>`).join("");
-  }
-  const startBtn = document.getElementById("sso-start");
-  const stopBtn = document.getElementById("sso-stop");
-  if (startBtn) startBtn.disabled = running;
-  if (stopBtn) stopBtn.disabled = !running;
-  setSsoSource(ssoSource);
-  renderSsoRows(data);
-}
-function renderSsoRows(data) {
-  const body = document.getElementById("sso-body");
-  if (!body) return;
-  const rows = ((data && data.items) || []).filter(it => {
-    if (ssoFilter === "all") return true;
-    if (ssoFilter === "error") return it.verdict === "error" || it.verdict === "unknown";
-    return it.verdict === ssoFilter;
-  });
-  if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="7" class="sso-empty">没有匹配的检测结果</td></tr>';
-    return;
-  }
-  body.innerHTML = rows.slice(-400).map(it => {
-    const verdict = it.verdict || "unknown";
-    const note = it.bot_flag_details || it.error || "-";
-    return `<tr>
-      <td class="mono">${esc(it.email || "-")}</td>
-      <td class="mono">${esc(it.bot_flag_source == null ? "-" : it.bot_flag_source)}</td>
-      <td class="mono">${esc(it.policy || "-")}</td>
-      <td class="mono">${esc(it.risk == null ? "-" : it.risk)}</td>
-      <td class="mono">${esc(it.event || "-")}</td>
-      <td><span class="sso-verdict ${esc(verdict)}">${esc(verdict)}</span></td>
-      <td>${esc(note)}</td>
-    </tr>`;
-  }).join("");
-}
-async function refreshSsoState(authHelp = false) {
-  return refreshOnce("sso-state", async () => {
-    try {
-      const data = await api("/api/sso-state?_=" + Date.now(), { authHelp });
-      renderSsoState(data);
-    } catch (e) {
-      const st = document.getElementById("sso-dash-status");
-      if (st) st.textContent = String(e.message || e).includes("令牌") ? "等待令牌" : "检查失败";
-    }
-  });
-}
-async function startSsoScan() {
-  setMsg("sso-msg", "正在启动 SSO 风控扫描 ...", "");
-  try {
-    const payload = {
-      source: ssoSource,
-      text: (document.getElementById("sso-input") || {}).value || "",
-      delay: Number((document.getElementById("sso-delay") || {}).value || 0.4),
-      proxy: (document.getElementById("sso-proxy") || {}).value || "",
-    };
-    const data = await api("/api/sso-state/start", { method: "POST", body: JSON.stringify(payload) });
-    setMsg("sso-msg", "已启动，共 " + (data.total || 0) + " 条", "ok");
-    await refreshSsoState();
-  } catch (e) { setMsg("sso-msg", String(e.message || e), "err"); }
-}
-async function stopSsoScan() {
-  try {
-    await api("/api/sso-state/stop", { method: "POST", body: "{}" });
-    setMsg("sso-msg", "已请求停止", "ok");
-    await refreshSsoState();
-  } catch (e) { setMsg("sso-msg", String(e.message || e), "err"); }
-}
-async function exportSsoState(kind) {
-  try {
-    const data = await api("/api/sso-state/export", { method: "POST", body: JSON.stringify({ kind }) });
-    const blob = new Blob([data.content || ""], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = kind === "clean" ? "sso_clean_redacted.jsonl" : "sso_flagged_redacted.jsonl";
-    a.click();
-    URL.revokeObjectURL(url);
-    setMsg("sso-msg", "已导出 " + (data.lines || 0) + " 行脱敏状态记录", "ok");
-  } catch (e) { setMsg("sso-msg", String(e.message || e), "err"); }
-}
-function setQualitySource(source) {
-  if (!["cpa", "g2a", "all"].includes(source)) return;
-  qualitySource = source;
-  ["cpa", "g2a", "all"].forEach(name => {
-    const btn = document.getElementById("quality-src-" + name);
-    if (btn) btn.setAttribute("aria-pressed", String(name === source));
-  });
-  const hint = document.getElementById("quality-source-hint");
-  const counts = (lastQualityState && lastQualityState.sources) || {};
-  const labels = {
-    cpa: "扫描 cpa_auth（" + (counts.cpa ?? 0) + "）。请求走家宽，让账号真正生成一段回复后再判定。",
-    g2a: "扫描 grok2api_auth（" + (counts.g2a ?? 0) + "）。",
-    all: "扫描 CPA + Grok2API auth（" + (counts.all ?? 0) + "）。",
-  };
-  if (hint) hint.textContent = labels[source] || labels.cpa;
-}
-function setQualityFilter(name) {
-  if (!["all", "healthy", "degraded", "risk", "error"].includes(name)) return;
-  qualityFilter = name;
-  ["all", "healthy", "degraded", "risk", "error"].forEach(key => {
-    const btn = document.getElementById("quality-filter-" + key);
-    if (btn) btn.setAttribute("aria-pressed", String(key === name));
-  });
-  renderQualityRows(lastQualityState);
-}
-function renderQuality(data) {
-  data = data || {};
-  lastQualityState = data;
-  const sum = data.summary || {};
-  const running = !!data.running;
-  const setText = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value; };
-  const degraded = sum.degraded_count ?? ((sum.soft_count || 0) + (sum.hard_count || 0) + (sum.burst_count || 0));
-  setText("quality-kpi-total", sum.total ?? data.total ?? "--");
-  setText("quality-kpi-healthy", sum.healthy_count ?? "--");
-  setText("quality-kpi-degraded", degraded);
-  setText("quality-kpi-risk", sum.risk_count ?? "--");
-  setText("quality-kpi-error", sum.error_count ?? "--");
-  const progress = (data.progress || 0) + "/" + (data.total || sum.total || 0);
-  setText("quality-kpi-progress", running ? progress : (sum.total ? String(sum.total) : "--"));
-  const status = running
-    ? ("测试中 " + progress)
-    : (data.error ? String(data.error) : (sum.scanned_at ? ("上次 " + sum.scanned_at) : "尚未扫描"));
-  setText("quality-heading-status", status);
-  setText("quality-job-status", status);
-  setText("quality-dash-status", running ? "测试中" : (sum.scanned_at || "家宽实聊"));
-  const dash = document.getElementById("quality-dash-kpis");
-  if (dash) {
-    dash.innerHTML = [
-      ["总数", sum.total ?? 0, ""],
-      ["正常", sum.healthy_count ?? 0, "ok"],
-      ["降智", degraded, degraded > 0 ? "fail" : ""],
-      ["风控", sum.risk_count ?? 0, (sum.risk_count || 0) > 0 ? "fail" : ""],
-    ].map(([label, value, cls]) => `<div class="chip"><span>${esc(label)}</span><b class="${cls}">${esc(value)}</b></div>`).join("");
-  }
-  const startBtn = document.getElementById("quality-start");
-  const stopBtn = document.getElementById("quality-stop");
-  if (startBtn) startBtn.disabled = running;
-  if (stopBtn) stopBtn.disabled = !running;
-  setQualitySource(qualitySource);
-  renderQualityRows(data);
-}
-function renderQualityRows(data) {
-  const body = document.getElementById("quality-body");
-  if (!body) return;
-  const rows = ((data && data.items) || []).filter(it => {
-    const verdict = it.verdict || "unknown";
-    if (qualityFilter === "all") return true;
-    if (qualityFilter === "degraded") return ["hard", "soft", "burst"].includes(verdict);
-    if (qualityFilter === "error") return verdict === "error" || verdict === "unknown" || verdict === "ignored";
-    return verdict === qualityFilter;
-  });
-  if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="7" class="sso-empty">没有匹配的检测结果</td></tr>';
-    return;
-  }
-  body.innerHTML = rows.slice(-400).map(it => {
-    const verdict = it.verdict || "unknown";
-    const note = it.error || "-";
-    return `<tr>
-      <td class="mono">${esc(it.email || "-")}</td>
-      <td><span class="sso-verdict ${esc(verdict)}">${esc(verdict)}</span></td>
-      <td class="mono">${esc(it.tps == null ? "-" : it.tps)}</td>
-      <td class="mono">${it.has_thinking ? "yes" : "no"}</td>
-      <td class="mono">${esc(it.output_tokens == null ? "-" : it.output_tokens)}</td>
-      <td class="mono">${esc(it.duration_ms == null ? "-" : (it.duration_ms + "ms"))}</td>
-      <td>${esc(note)}</td>
-    </tr>`;
-  }).join("");
-}
-async function refreshQuality(authHelp = false) {
-  try {
-    const data = await api("/api/quality?_=" + Date.now(), { authHelp });
-    renderQuality(data);
-  } catch (e) {
-    const st = document.getElementById("quality-dash-status");
-    if (st) st.textContent = String(e.message || e).includes("令牌") ? "等待令牌" : "检查失败";
-  }
-}
-async function startQualityScan() {
-  setMsg("quality-msg", "正在启动降智测试 ...", "");
-  try {
-    const payload = {
-      source: qualitySource,
-      workers: Number((document.getElementById("quality-workers") || {}).value || 2),
-      delay: Number((document.getElementById("quality-delay") || {}).value || 0.2),
-      proxy: (document.getElementById("quality-proxy") || {}).value || "",
-      limit: Number((document.getElementById("quality-limit") || {}).value || 200),
-      prefer_home: true,
-    };
-    const data = await api("/api/quality/start", { method: "POST", body: JSON.stringify(payload) });
-    setMsg("quality-msg", "已启动，共 " + (data.total || 0) + " 条，家宽 " + (data.proxy_count || 0) + " 条", "ok");
-    await refreshQuality();
-  } catch (e) { setMsg("quality-msg", String(e.message || e), "err"); }
-}
-async function stopQualityScan() {
-  try {
-    await api("/api/quality/stop", { method: "POST", body: "{}" });
-    setMsg("quality-msg", "已请求停止", "ok");
-    await refreshQuality();
-  } catch (e) { setMsg("quality-msg", String(e.message || e), "err"); }
-}
-async function exportQuality(kind) {
-  try {
-    const data = await api("/api/quality/export", { method: "POST", body: JSON.stringify({ kind }) });
-    const blob = new Blob([data.content || ""], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = kind === "risk" ? "quality_risk_redacted.jsonl" : "quality_degraded_redacted.jsonl";
-    a.click();
-    URL.revokeObjectURL(url);
-    setMsg("quality-msg", "已导出 " + (data.lines || 0) + " 行脱敏结果", "ok");
-  } catch (e) { setMsg("quality-msg", String(e.message || e), "err"); }
 }
 function renderBlacklist(bl, upd) {
   bl = bl || {};
@@ -4489,8 +3706,8 @@ function renderStats(s, opts) {
   const jsonlOk = (typeof s.jsonl_ok === "number") ? s.jsonl_ok : (lastFullStats && lastFullStats.jsonl_ok);
   const jsonlRisk = (typeof s.jsonl_risk === "number") ? s.jsonl_risk : (lastFullStats && lastFullStats.jsonl_risk);
   document.getElementById("stats-chips").innerHTML = [
-    ["CPA", s.cpa ?? "--", "accent"],
-    ["CPA 变化", s.cpa_delta ?? "--", "ok"],
+    ["账号总量", s.cpa ?? "--", "accent"],
+    ["账号变化", s.cpa_delta ?? "--", "ok"],
     ["本批成功", s.batch_ok ?? 0, "ok"],
     ["本批失败", s.batch_fail ?? 0, "fail"],
     ["jsonl ok", jsonlOk != null ? jsonlOk : "--", "ok"],
@@ -4554,9 +3771,8 @@ function render(d) {
   const kpis = [
     ["本批成功", d.ok ?? 0, "ok", "目标 " + (d.target ?? "--")],
     ["本批失败", d.fail ?? 0, "fail", d.success_rate != null ? "成功率 " + d.success_rate + "%" : "暂无数据"],
-    ["CPA 总量", d.cpa ?? "--", "accent", "较基线 " + (d.cpa_delta != null ? ((Number(d.cpa_delta) >= 0 ? "+" : "") + d.cpa_delta) : "--")],
-    ["正常 / 风控", (d.bot0 ?? 0) + " / " + (d.bot1 ?? 0), (d.bot1 ?? 0) > 0 ? "warn" : "ok", "注册结果采样"],
-    ["BFS 标记", d.bfs ?? 0, (d.bfs ?? 0) > 0 ? "warn" : "ok", "JWT claim 命中"],
+    ["账号总量", d.cpa ?? "--", "accent", "较基线 " + (d.cpa_delta != null ? ((Number(d.cpa_delta) >= 0 ? "+" : "") + d.cpa_delta) : "--")],
+    ["成功 / 失败", (d.ok ?? 0) + " / " + (d.fail ?? 0), (d.fail ?? 0) > 0 ? "warn" : "ok", "本批次统计"],
     ["黑名单 ASN", (d.blacklist && d.blacklist.count) ?? "--", "accent", "更新错误 " + ((d.blacklist_update && d.blacklist_update.error_count) ?? 0)],
     ["本批代理流量", hasTrafficBatch ? formatBytes(trafficTotal) : "--", "accent", trafficSub],
     ["预计完成", d.ended ? "已完成" : (d.eta || "--"), "", "并发 " + (d.workers ?? "--") + (d.rate_per_min != null ? " / " + d.rate_per_min + " 每分钟" : "")],
@@ -4693,22 +3909,8 @@ setInterval(refresh, 2000);
 // 完整成功统计：启动拉一次，之后每 30s 刷新（避免 2s 轮询冲掉）
 refreshStats(false);
 setInterval(() => refreshStats(false), 30000);
-refreshRecovery();
 refreshAccountLogin(false);
-setInterval(refreshRecovery, 5000);
 setInterval(() => refreshAccountLogin(false), 5000);
-refreshBfs();
-setInterval(refreshBfs, 15000);
-refreshSsoState();
-refreshQuality();
-setInterval(() => {
-  if (document.body.classList.contains("sso-view-open") || (lastSsoState && lastSsoState.running)) {
-    refreshSsoState(false);
-  }
-  if (document.body.classList.contains("quality-view-open") || (lastQualityState && lastQualityState.running)) {
-    refreshQuality(false);
-  }
-}, 2000);
 setInterval(() => {
   if (document.body.classList.contains("proxy-view-open")) refreshProxies(false);
   if (document.body.classList.contains("domain-view-open")) refreshEmailDomains(false);
@@ -4829,8 +4031,6 @@ class Handler(BaseHTTPRequestHandler):
         if u.path in (
             "/api/accounts/export-sso",
             "/api/accounts/export-credentials-csv",
-            "/api/accounts/export-cpa-auth",
-            "/api/accounts/export-grok2api-auth",
         ):
             if not self._require_write():
                 return
@@ -4838,13 +4038,9 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path.endswith("export-sso"):
                     filename, body = sso_export()
                     content_type = "text/plain; charset=utf-8"
-                elif u.path.endswith("export-credentials-csv"):
+                else:
                     filename, body = credentials_csv_export()
                     content_type = "text/csv; charset=utf-8"
-                else:
-                    kind = "cpa" if u.path.endswith("export-cpa-auth") else "grok2api"
-                    filename, body = auth_files_zip_export(kind)
-                    content_type = "application/zip"
                 self._send(
                     200,
                     body,
@@ -4864,7 +4060,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json(500, {"ok": False, "error": redact_log_line(str(exc))})
             return
-        if u.path in ("/api/status", "/api/blacklist", "/api/stats", "/api/control", "/api/recovery", "/api/proxies", "/api/email-provider", "/api/email-domains", "/api/bfs", "/api/sso-state", "/api/quality"):
+        if u.path in ("/api/status", "/api/blacklist", "/api/stats", "/api/control", "/api/proxies", "/api/email-provider", "/api/email-domains"):
             if not self._require_read():
                 return
         if u.path == "/api/status":
@@ -4890,30 +4086,6 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/control":
             self._json(200, load_control())
             return
-        if u.path == "/api/recovery":
-            try:
-                self._json(200, recovery_status())
-            except Exception as e:
-                self._json(500, {"ok": False, "error": str(e)})
-            return
-        if u.path == "/api/bfs":
-            try:
-                self._json(200, bfs_status())
-            except Exception as e:
-                self._json(500, {"ok": False, "error": redact_log_line(str(e))})
-            return
-        if u.path == "/api/sso-state":
-            try:
-                self._json(200, sso_state_status())
-            except Exception as e:
-                self._json(500, {"ok": False, "error": redact_log_line(str(e))})
-            return
-        if u.path == "/api/quality":
-            try:
-                self._json(200, quality_status())
-            except Exception as e:
-                self._json(500, {"ok": False, "error": redact_log_line(str(e))})
-            return
         if u.path == "/api/proxies":
             try:
                 self._json(200, read_proxy_pool())
@@ -4936,12 +4108,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urlparse(self.path)
-        # All POST endpoints require MONITOR_TOKEN
         if not self._require_write():
             return
         try:
-            body_limit = 4 * 1024 * 1024 if u.path == "/api/sso-state/start" else None
-            body = self._read_body(max_size=body_limit)
+            body = self._read_body()
         except OverflowError as exc:
             self._json(413, {"ok": False, "error": str(exc)})
             return
@@ -4972,50 +4142,12 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._json(500, {"error": str(e)})
             return
-        if u.path == "/api/recovery/start":
-            try:
-                with START_LOCK:
-                    result = start_recovery((body or {}).get("scope") or "pending")
-                self._json(200 if result.get("ok") else 409, result)
-            except Exception as e:
-                self._json(500, {"ok": False, "error": str(e)})
-            return
-        if u.path == "/api/recovery/stop":
-            try:
-                self._json(200, stop_recovery())
-            except Exception as e:
-                self._json(500, {"ok": False, "error": str(e)})
-            return
         if u.path == "/api/account-login/import":
             try:
                 result = import_accounts(body.get("accounts"))
                 self._json(200 if result.get("ok") else 409, result)
             except ValueError as exc:
                 self._json(400, {"ok": False, "error": redact_log_line(str(exc))})
-            except Exception as exc:
-                self._json(500, {"ok": False, "error": redact_log_line(str(exc))})
-            return
-        if u.path == "/api/account-login/match-sso":
-            try:
-                with START_LOCK:
-                    result = start_account_sso_match((body or {}).get("sso"))
-                self._json(202 if result.get("ok") else 409, result)
-            except ValueError as exc:
-                self._json(400, {"ok": False, "error": redact_log_line(str(exc))})
-            except Exception as exc:
-                self._json(500, {"ok": False, "error": redact_log_line(str(exc))})
-            return
-        if u.path == "/api/account-login/sso-check":
-            try:
-                with START_LOCK:
-                    result = start_sso_check(concurrency=(body or {}).get("concurrency") or 1)
-                self._json(202 if result.get("ok") else 409, result)
-            except Exception as exc:
-                self._json(500, {"ok": False, "error": redact_log_line(str(exc))})
-            return
-        if u.path == "/api/account-login/sso-check/stop":
-            try:
-                self._json(200, stop_sso_check())
             except Exception as exc:
                 self._json(500, {"ok": False, "error": redact_log_line(str(exc))})
             return
@@ -5026,7 +4158,6 @@ class Handler(BaseHTTPRequestHandler):
                     result = start_account_login(
                         body.get("ids"),
                         concurrency=body.get("concurrency") or 1,
-                        extract_cpa=body.get("extract_cpa") is True,
                         pending_only=(scope == "pending"),
                         pending_scope=None if scope in {"selected", "pending"} else scope,
                     )
@@ -5048,88 +4179,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": redact_log_line(str(exc))})
             except Exception as exc:
                 self._json(500, {"ok": False, "error": redact_log_line(str(exc))})
-            return
-        if u.path == "/api/account-login/delete-invalid":
-            try:
-                result = delete_checked_invalid_accounts(body.get("ids"))
-                self._json(200 if result.get("ok") else 409, result)
-            except ValueError as exc:
-                self._json(400, {"ok": False, "error": redact_log_line(str(exc))})
-            except Exception as exc:
-                self._json(500, {"ok": False, "error": redact_log_line(str(exc))})
-            return
-        if u.path == "/api/bfs/scan":
-            try:
-                limit = int((body or {}).get("limit") or 0)
-                include_clean = bool((body or {}).get("include_clean"))
-                result = run_bfs_scan(limit=limit, include_clean=include_clean)
-                self._json(200, result)
-            except Exception as e:
-                self._json(500, {"ok": False, "error": redact_log_line(str(e))})
-            return
-        if u.path == "/api/bfs/check":
-            try:
-                token = str((body or {}).get("token") or "").strip()
-                if not token:
-                    self._json(400, {"ok": False, "error": "token required"})
-                    return
-                self._json(200, check_token_text(token))
-            except Exception as e:
-                self._json(400, {"ok": False, "error": redact_log_line(str(e))})
-            return
-        if u.path == "/api/sso-state/start":
-            try:
-                result = start_sso_state_scan(
-                    source=str((body or {}).get("source") or "paste"),
-                    text=str((body or {}).get("text") or ""),
-                    delay=(body or {}).get("delay", 0.4),
-                    proxy=str((body or {}).get("proxy") or ""),
-                )
-                code = 200 if result.get("ok") else (409 if result.get("running") else 400)
-                self._json(code, result)
-            except Exception as e:
-                self._json(500, {"ok": False, "error": redact_log_line(str(e))})
-            return
-        if u.path == "/api/sso-state/stop":
-            try:
-                self._json(200, stop_sso_state_scan())
-            except Exception as e:
-                self._json(500, {"ok": False, "error": redact_log_line(str(e))})
-            return
-        if u.path == "/api/sso-state/export":
-            try:
-                result = read_sso_state_export(str((body or {}).get("kind") or "flagged"))
-                self._json(200 if result.get("ok") else 404, result)
-            except Exception as e:
-                self._json(500, {"ok": False, "error": redact_log_line(str(e))})
-            return
-        if u.path == "/api/quality/start":
-            try:
-                result = start_quality_scan(
-                    source=str((body or {}).get("source") or "cpa"),
-                    proxy=str((body or {}).get("proxy") or ""),
-                    prefer_home=bool((body or {}).get("prefer_home", True)),
-                    workers=(body or {}).get("workers", 2),
-                    delay=(body or {}).get("delay", 0.2),
-                    limit=(body or {}).get("limit", 0),
-                )
-                code = 200 if result.get("ok") else (409 if result.get("running") else 400)
-                self._json(code, result)
-            except Exception as e:
-                self._json(500, {"ok": False, "error": redact_log_line(str(e))})
-            return
-        if u.path == "/api/quality/stop":
-            try:
-                self._json(200, stop_quality_scan())
-            except Exception as e:
-                self._json(500, {"ok": False, "error": redact_log_line(str(e))})
-            return
-        if u.path == "/api/quality/export":
-            try:
-                result = read_quality_export(str((body or {}).get("kind") or "degraded"))
-                self._json(200 if result.get("ok") else 404, result)
-            except Exception as e:
-                self._json(500, {"ok": False, "error": redact_log_line(str(e))})
             return
         if u.path == "/api/proxies/import":
             try:

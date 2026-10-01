@@ -15,7 +15,7 @@ if str(ROOT) not in sys.path:
 from webui import account_login_ops as ops
 
 
-def test_start_rejects_registration_or_recovery_conflicts():
+def test_start_rejects_registration_conflicts():
     def registration_running(_root, scripts):
         return [{"pid": 10}] if "run_until_100.py" in scripts else []
 
@@ -23,14 +23,6 @@ def test_start_rejects_registration_or_recovery_conflicts():
         result = ops.start_account_login(["a" * 20])
     assert result["ok"] is False
     assert "registration" in result["error"]
-
-    def recovery_running(_root, scripts):
-        return [{"pid": 11}] if "sso_to_auth_json.py" in scripts else []
-
-    with patch.object(ops, "find_managed_processes", side_effect=recovery_running):
-        result = ops.start_account_login(["a" * 20])
-    assert result["ok"] is False
-    assert "recovery" in result["error"]
 
 
 def test_start_writes_id_only_job_and_launches_worker():
@@ -332,7 +324,7 @@ def test_start_sso_match_uses_private_input_path_without_secret_arguments():
 
 
 if __name__ == "__main__":
-    test_start_rejects_registration_or_recovery_conflicts()
+    test_start_rejects_registration_conflicts()
     test_start_writes_id_only_job_and_launches_worker()
     test_worker_watcher_persists_linux_launcher_failure()
     test_status_does_not_overwrite_error_while_watcher_is_finishing()

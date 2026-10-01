@@ -59,13 +59,12 @@ def test_docker_image_contract() -> None:
 def test_runtime_paths_are_container_overridable() -> None:
     worker = (ROOT / "grok_register_ttk.py").read_text(encoding="utf-8")
     batch = (ROOT / "run_batch_headless.py").read_text(encoding="utf-8")
-    recovery = (ROOT / "webui" / "recovery_ops.py").read_text(encoding="utf-8")
     monitor = (ROOT / "webui" / "monitor.py").read_text(encoding="utf-8")
-    sso = (ROOT / "sso_to_auth_json.py").read_text(encoding="utf-8")
+    login = (ROOT / "webui" / "account_login_ops.py").read_text(encoding="utf-8")
 
-    for source in (worker, batch, recovery, monitor):
+    for source in (worker, batch, monitor):
         assert "GROK_REGISTER_CONFIG_FILE" in source
-    assert "NEXT_ACTION_CACHE_FILE" in sso
+    assert "ACCOUNT_LOGIN_STATE_FILE" in (ROOT / "docker-entrypoint.sh").read_text(encoding="utf-8")
 
 
 def test_docker_publish_workflow() -> None:

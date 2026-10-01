@@ -26,11 +26,6 @@ try:
         read_account_inventory,
         reset_incomplete_accounts,
     )
-    from webui.account_sso_check_ops import (
-        _read_private_report as _read_sso_check_report,
-        sso_check_annotations,
-        sso_check_status,
-    )
     from webui.process_utils import find_managed_processes, terminate_managed_processes, write_pid_file
     from webui.security_utils import redact_log_line
 except ImportError:  # running from webui/
@@ -48,13 +43,25 @@ except ImportError:  # running from webui/
         read_account_inventory,
         reset_incomplete_accounts,
     )
-    from account_sso_check_ops import (  # type: ignore
-        _read_private_report as _read_sso_check_report,
-        sso_check_annotations,
-        sso_check_status,
-    )
     from process_utils import find_managed_processes, terminate_managed_processes, write_pid_file  # type: ignore
     from security_utils import redact_log_line  # type: ignore
+
+
+def _read_sso_check_report() -> dict:
+    return {}
+
+
+def sso_check_annotations(**kwargs) -> dict:
+    return {}
+
+
+def sso_check_status(**kwargs) -> dict:
+    return {"running": False, "items": []}
+
+
+def delete_checked_invalid_accounts(ids: object) -> dict:
+    return delete_imported_accounts(ids)
+
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -76,7 +83,7 @@ _LOG_TAIL_LINES = 160
 def _workers() -> list[dict]:
     return find_managed_processes(
         ROOT,
-        ("account_login_worker.py", "account_sso_match_worker.py", "account_sso_check_worker.py"),
+        ("account_login_worker.py",),
     )
 
 
@@ -354,8 +361,6 @@ def start_account_login(
 ) -> dict:
     if find_managed_processes(ROOT, ("run_until_100.py", "run_batch_headless.py")):
         return {"ok": False, "error": "registration task is running"}
-    if find_managed_processes(ROOT, ("sso_to_auth_json.py",)):
-        return {"ok": False, "error": "account recovery is running"}
     existing = _workers()
     if existing:
         return {"ok": False, "error": "account login task already running", "pid": existing[0]["pid"]}
@@ -581,7 +586,7 @@ def stop_account_login() -> dict:
         _INTENTIONAL_STOPS.update(int(item["pid"]) for item in workers)
     killed = terminate_managed_processes(
         ROOT,
-        ("account_login_worker.py", "account_sso_match_worker.py", "account_sso_check_worker.py"),
+        ("account_login_worker.py",),
     )
     reset_incomplete_accounts()
     return {"ok": True, "killed": killed, "status": account_login_status()}
@@ -591,3 +596,7 @@ def delete_imported_accounts(ids: object) -> dict:
     if _workers():
         return {"ok": False, "error": "stop the account login task before deleting accounts"}
     return delete_accounts(ids)
+
+
+if __name__ == "__main__":
+    account_login_status()

@@ -6,35 +6,28 @@ credentials as fixtures or examples.
 
 ## Project Scope
 
-Grok Register + Live Panel is a Camoufox-based registration workflow with a
-local operations panel. It is intended for authorized research, integration,
-and personal environments. Do not add features intended to evade access
-controls, scrape or distribute third-party proxies, or conceal unauthorized
-bulk abuse.
+Mistral Register + Live Panel is a Camoufox-based registration workflow with a
+local operations panel for Mistral AI account creation and API Key extraction.
+It is intended for authorized research, integration, and personal environments.
+Do not add features intended to evade access controls, scrape or distribute
+third-party proxies, or conceal unauthorized bulk abuse.
 
 ## Architecture And Ownership
 
 - `register_flow.py`, `browser_session.py`, and `camoufox_adapter.py` own the
-  browser registration flow, session lifecycle, exit checks, and Camoufox
-  integration.
+  browser registration flow, OTP verification, API key creation/extraction,
+  session lifecycle, exit checks, and Camoufox integration.
 - `run_batch_headless.py` starts a batch. `batch_supervisor.py` supervises its
   child process, restarts driver crashes or idle runs, and resumes only the
   remaining slots through an atomic progress file.
 - `run_until_100.py` owns multi-batch orchestration and runtime control state.
-- `sso_to_auth_json.py` owns SSO/device OAuth conversion and CPA/Grok2API auth
-  output. Successful output is not rolled back when a later slot fails.
+- `webui/account_exports.py` owns formatted exports (`account.csv` with
+  `email,passwd,api_key` and `key.txt` with one key per line). Successful output
+  is not rolled back when a later slot fails.
 - `email_providers/` contains provider adapters. Keep provider-specific API
   behavior there instead of branching throughout the registration flow.
 - `webui/monitor.py` owns the HTTP server and embedded UI. Its focused stores
   and operations live in `webui/*_store.py` and `webui/*_ops.py`.
-- `webui/sso_state_ops.py` owns the deprecated SSO botFlag / policy scan job.
-  Reports must not include raw SSO tokens; clean exports stay in
-  `log/sso_clean.txt`. Do not use this scan as a live risk gate.
-- `quality_probe.py` and `webui/quality_ops.py` own the 降智测试: short streamed
-  chat replies over 家宽/proxy pool (early-stop after thinking). Registration
-  stamps `quality_*` onto CPA/Grok2API auth only when `quality_probe_on_register`
-  is on (default off). Panel exports must not include access tokens. Prefer home
-  proxies from `proxy_store.worker_proxy_details()`.
 - `webui/proxy_store.py` owns proxy import, normalization, health, cooldown, and
   redacted API views. `webui/email_provider_store.py` owns provider config and
   secret-preserving updates. `webui/email_domain_store.py` owns domain rotation
@@ -54,14 +47,12 @@ bulk abuse.
 2. The supervisor isolates each browser batch and resumes incomplete work after
    a recoverable driver crash or idle timeout.
 3. A worker selects an enabled, healthy proxy and keeps that same proxy for one
-   account across registration, SSO, and OAuth.
+   account across registration, OTP verification, and API key extraction.
 4. Email provider/domain selection occurs before the registration form. Only an
-   explicit xAI domain rejection increments domain rejection state.
-5. Successful SSO can be converted to CPA/Grok2API auth. BFS detection is a JWT
-   claim check separate from the deprecated grok.com `botFlagSource` page field.
-   Account chat quality / 风控 is judged by `quality_probe` (short real replies),
-   not SSO homepage scraping. New accounts are probed after OAuth write only when
-   `quality_probe_on_register` is enabled.
+   explicit domain rejection increments domain rejection state.
+5. Successful registration creates and extracts an API key. Accounts are saved
+   to `account.csv` (`email,passwd,api_key`) and `key.txt` (`mstrl_...` keys,
+   one per line). The panel provides direct one-click exports for both formats.
 6. The panel reads JSON/runtime state and controls only processes whose command
    line resolves to this project root.
 
@@ -138,7 +129,7 @@ screenshots.
 Never commit or paste real values from:
 
 - `config.json`, `.env.monitor`, `proxies*.txt`, or `stickies*.txt`
-- `accounts/`, `cpa_auth/`, `grok2api_auth/`, or any exported auth file
+- `accounts/`, `account.csv`, `key.txt`, or any exported account/auth file
 - `log/`, including proxy pool, email domain pool, monitor token, reports, and
   static cache data
 - API keys, JWTs, passwords, proxy userinfo, OTP/device codes, or bearer tokens
@@ -222,7 +213,7 @@ share browser profiles, cookies, or authentication state between accounts.
   return 401 when configured, and authenticated endpoints work.
 - Scan the diff and new images for secrets, real hostnames, private endpoints,
   account data, and live proxy credentials.
-- Do not synchronize or restart a deployed instance while registration or
-  recovery jobs are active.
+- Do not synchronize or restart a deployed instance while registration jobs
+  are active.
 - Use `UMask=0077`, `PANEL_INCLUDE_TAIL=0`, a strong token, and an exact bind
   address for production service units.

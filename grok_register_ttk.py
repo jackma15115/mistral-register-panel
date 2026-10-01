@@ -32,8 +32,7 @@ from playwright._impl._errors import TargetClosedError as PageDisconnectedError
 from curl_cffi import requests
 import requests as _std_requests
 
-# SSO → CLIProxyAPI(CPA) 扁平格式转换（复用 sso_to_auth_json 的授权码流程 + 写入器）
-import sso_to_auth_json as _s2cpa
+_s2cpa = None
 from email_providers import cloudflare as cloudflare_provider
 from email_providers import cloudmail as cloudmail_provider
 from email_providers import duckmail as duckmail_provider

@@ -9,7 +9,7 @@ def test_no_live_path_in_key_modules():
         "webui/blacklist_store.py",
         "webui/monitor.py",
         "webui/process_utils.py",
-        "webui/recovery_ops.py",
+        "webui/account_login_ops.py",
         "run_batch_headless.py",
         "run_until_100.py",
     ]:
