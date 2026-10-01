@@ -1,0 +1,38 @@
+services:
+  panel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${GROK_REGISTER_IMAGE:-grok-register-panel:local}
+    container_name: grok-register-panel
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    ports:
+      - "${MONITOR_BIND_ADDRESS:-127.0.0.1}:${MONITOR_PORT:-8787}:8787"
+    shm_size: "1gb"
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - ${GROK_REGISTER_HOST_DATA_DIR:-./data/docker}:/data
+    environment:
+      TZ: "${TZ:-Asia/Singapore}"
+      MONITOR_HOST: "0.0.0.0"
+      MONITOR_PORT: "8787"
+      MONITOR_TOKEN: "${MONITOR_TOKEN:?set MONITOR_TOKEN in .env}"
+      PANEL_INCLUDE_TAIL: "${PANEL_INCLUDE_TAIL:-0}"
+      GROK_REGISTER_DATA_DIR: "/data"
+      GROK_REGISTER_CONFIG_FILE: "/data/config.json"
+      ACCOUNT_LOGIN_STATE_FILE: "/data/accounts/imported_credentials.json"
+      MONITOR_MAX_REQUEST_BODY: "${MONITOR_MAX_REQUEST_BODY:-16777216}"
+      NEXT_ACTION_CACHE_FILE: "/data/.next_action_id.cache"
+      GROK_REGISTER_BROWSER_AUTO_FETCH: "${GROK_REGISTER_BROWSER_AUTO_FETCH:-1}"
+      GROK_BATCH_IDLE_TIMEOUT: "${GROK_BATCH_IDLE_TIMEOUT:-360}"
+      GROK_BATCH_MAX_RESTARTS: "${GROK_BATCH_MAX_RESTARTS:-8}"
+      PROXY_NETWORK_COOLDOWN_SECONDS: "${PROXY_NETWORK_COOLDOWN_SECONDS:-90}"
+      PROXY_RISK_COOLDOWN_SECONDS: "${PROXY_RISK_COOLDOWN_SECONDS:-1800}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8787/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 5

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="360" viewBox="0 0 900 360" role="img" aria-labelledby="title desc">
+  <title id="title">GitHub star history for jackma15115/grok-register-panel</title>
+  <desc id="desc">Cumulative GitHub stars from 2026-07-31 to 2026-08-01; current total 0.</desc>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0; }
+    .title { fill: #151613; font-size: 18px; font-weight: 600; }
+    .repo { fill: #656761; font-size: 12px; }
+    .axis { fill: #656761; font-size: 11px; }
+    .grid { stroke: #d9dad5; stroke-width: 1; }
+    .line { fill: none; stroke: #b93b28; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+    .area { fill: #b93b28; fill-opacity: 0.12; }
+    .dot { fill: #b93b28; stroke: #ffffff; stroke-width: 3; }
+    .value { fill: #151613; font-size: 12px; font-weight: 600; }
+    .empty { fill: #656761; font-size: 13px; }
+  </style>
+  <rect width="900" height="360" rx="6" fill="#f7f8f5" />
+  <rect x="18" y="18" width="864" height="324" rx="4" fill="#ffffff" stroke="#c7c9c3" />
+  <text class="title" x="66" y="45">GitHub star history</text>
+  <text class="repo" x="866" y="44" text-anchor="end">jackma15115/grok-register-panel</text>
+  <line class="grid" x1="66" y1="306.00" x2="866" y2="306.00" /><line class="grid" x1="66" y1="72.00" x2="866" y2="72.00" />
+  <text class="axis" x="54" y="310.00" text-anchor="end">0</text><text class="axis" x="54" y="76.00" text-anchor="end">1</text><text class="axis" x="66.00" y="333" text-anchor="start">07-31 05:51</text><text class="axis" x="266.00" y="333" text-anchor="middle">07-31 11:51</text><text class="axis" x="466.00" y="333" text-anchor="middle">07-31 17:51</text><text class="axis" x="666.00" y="333" text-anchor="middle">07-31 23:51</text><text class="axis" x="866.00" y="333" text-anchor="end">08-01 05:51</text>
+  <path class="area" d="M 66.00 306.00 L 66.00 306 L 66.00 306 Z" />
+  <path class="line" d="M 66.00 306.00" />
+  <circle class="dot" cx="66.00" cy="306.00" r="5" />
+  <text class="value" x="854" y="294.00" text-anchor="end">0 stars</text>
+<text class="empty" x="466.00" y="189.00" text-anchor="middle">No stars yet</text>
+</svg>

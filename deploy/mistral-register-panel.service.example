@@ -1,0 +1,21 @@
+[Unit]
+Description=Mistral Register Panel
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mistral-register
+Group=mistral-register
+WorkingDirectory=/opt/mistral-register-panel
+EnvironmentFile=/etc/mistral-register-panel.env
+UMask=0077
+ExecStartPre=/opt/mistral-register-panel/.venv/bin/python /opt/mistral-register-panel/scripts/harden_runtime_permissions.py /opt/mistral-register-panel
+ExecStart=/opt/mistral-register-panel/.venv/bin/python -u /opt/mistral-register-panel/webui/monitor.py
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
