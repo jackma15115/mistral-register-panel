@@ -19,7 +19,7 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements.txt
       - run: python -m pip install pytest
-      - run: PYTHON_BIN=python scripts/run_tests.sh
+      - run: PYTHON_BIN=python bash scripts/run_tests.sh
 
   windows-runtime:
     runs-on: windows-latest
